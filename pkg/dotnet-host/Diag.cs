@@ -30,7 +30,8 @@ namespace MoonlightHost
     internal static class Diag
     {
         private const int O_RDONLY = 0, O_CLOEXEC = 0x80000;   // ARM values
-        private const int PROT_READ = 1, PROT_EXEC = 4, MAP_PRIVATE = 2, PAGE = 4096;
+        private const int PROT_READ = 1, PROT_WRITE = 2, PROT_EXEC = 4, MAP_PRIVATE = 2, PAGE = 4096;
+        private const int MAP_ANONYMOUS = 0x20;                 // ARM Linux
         private static readonly IntPtr MAP_FAILED = new IntPtr(-1);
         private static readonly string[] Xattrs = {
             "security.SMACK64", "security.SMACK64EXEC", "security.SMACK64MMAP", "security.SMACK64TRANSMUTE",
@@ -40,6 +41,7 @@ namespace MoonlightHost
         [DllImport("libc")]                      private static extern int close(int fd);
         [DllImport("libc", SetLastError = true)] private static extern IntPtr mmap(IntPtr addr, UIntPtr len, int prot, int flags, int fd, int off);
         [DllImport("libc")]                      private static extern int munmap(IntPtr addr, UIntPtr len);
+        [DllImport("libc", SetLastError = true)] private static extern int mprotect(IntPtr addr, UIntPtr len, int prot);
         [DllImport("libc", SetLastError = true)] private static extern IntPtr lgetxattr(string path, string name, byte[] value, UIntPtr size);
         [DllImport("libc", SetLastError = true)] private static extern IntPtr realpath(string path, IntPtr resolved);
         [DllImport("libc")]                      private static extern void free(IntPtr p);
@@ -103,6 +105,7 @@ namespace MoonlightHost
                     Step("memfd", () => sum.Add(MemfdRoute(so)));
                     Step("data-copy", () => sum.Add(DataCopyRoute(so)));
                 }
+                Step("anon-exec", () => sum.Add(AnonExecRoute()));
                 Step("deps", () => sum.Add(Deps()));
                 W("summary", string.Join("; ", sum));
             }
@@ -335,6 +338,37 @@ namespace MoonlightHost
             try { return FileRoute("data-copy", dst); }
             finally { try { File.Delete(dst); } catch (Exception e) { W("data-copy", "delete failed: " + e.Message); } }
         }
+
+        // The loader's (and the JIT's) mechanism, probed directly: anonymous RW memory,
+        // mprotect to RX, then call a two-instruction ARM function through a delegate.
+        // fd-backed exec-mmap may be refused on this target while this still works.
+        private static string AnonExecRoute()
+        {
+            byte[] code = { 0x2a, 0x00, 0xa0, 0xe3,      // mov r0, #42
+                            0x1e, 0xff, 0x2f, 0xe1 };     // bx lr
+            IntPtr p = mmap(IntPtr.Zero, (UIntPtr)PAGE, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+            int e = Marshal.GetLastWin32Error();
+            if (p == MAP_FAILED || p == IntPtr.Zero)
+            { W("anon-exec", "mmap(anon rw) branch=failed " + Errno(e)); return "anon-exec: mmap failed(" + e + ")"; }
+            try
+            {
+                Marshal.Copy(code, 0, p, code.Length);
+                if (mprotect(p, (UIntPtr)PAGE, PROT_READ | PROT_EXEC) != 0)
+                {
+                    e = Marshal.GetLastWin32Error();
+                    W("anon-exec", "mprotect(rx) branch=failed " + Errno(e));
+                    return "anon-exec: mprotect failed(" + e + ")";
+                }
+                W("anon-exec", "mprotect(rx) branch=ok");
+                var fn = (AnonFn)Marshal.GetDelegateForFunctionPointer(p, typeof(AnonFn));
+                int r = fn();
+                W("anon-exec", "call branch=ok, returned " + r + (r == 42 ? " (expected)" : " (UNEXPECTED)"));
+                return r == 42 ? "anon-exec: ok(42)" : "anon-exec: wrong result " + r;
+            }
+            finally { munmap(p, (UIntPtr)PAGE); }
+        }
+
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)] private delegate int AnonFn();
 
         private static string Deps()
         {
