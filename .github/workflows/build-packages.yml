@@ -20,6 +20,13 @@ on:
         required: false
   push:
     tags: ['v*']
+  # Test packages for every PR. Fork PRs get no secrets, so the gate below skips them.
+  pull_request:
+
+# A new push to a PR cancels that PR's older, still-running build.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: write   # attach packages to the GitHub Release on a tag
@@ -83,10 +90,15 @@ jobs:
           REF: ${{ github.ref }}
           TAG: ${{ inputs.tag || github.ref_name }}
           INPUT_TAG: ${{ inputs.tag }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          # on a PR, HEAD is GitHub's temporary merge commit; name the build after the PR head
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
         run: |
           case "$REF" in refs/tags/*) is_tag=1 ;; *) is_tag=${INPUT_TAG:+1} ;; esac
           if [ -n "$is_tag" ]; then
             VER=${TAG#v}
+          elif [ -n "$PR_NUMBER" ]; then
+            VER=pr$PR_NUMBER-${PR_HEAD:0:7}
           else
             VER=$(git rev-parse --short HEAD)
           fi
@@ -94,7 +106,8 @@ jobs:
           # package version (x.y.z) from the tag; other builds keep the manifests' version
           APP_VERSION=$(echo "$VER" | grep -oE '^[0-9]+\.[0-9]+\.[0-9]+' || true)   # v0.0.6-debug -> 0.0.6
           [ -z "$APP_VERSION" ] || echo "APP_VERSION=$APP_VERSION" >> "$GITHUB_ENV"
-          echo "BUILD_COMMIT=$(git rev-parse --short HEAD)" >> "$GITHUB_ENV"
+          if [ -n "$PR_HEAD" ]; then BUILD_COMMIT=${PR_HEAD:0:7}; else BUILD_COMMIT=$(git rev-parse --short HEAD); fi
+          echo "BUILD_COMMIT=$BUILD_COMMIT" >> "$GITHUB_ENV"
 
       - name: Build packages
         if: steps.gate.outputs.have_libs == 'true'
