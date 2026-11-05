@@ -5,7 +5,8 @@ var logs = [], warns = [], errs = [], timers = [], now = 0, tid = 1;
 var byId = {}, domReady = null, remoteUp = false, hostDead = false, launchFails = false, launches = 0, sentAt = 0, sent = [], listener = null, handled = [];
 var cleared = {}, pads = [];
 var padListener = null, padCapture = null;
-var win = { addEventListener: function (ev, f, cap) { if (ev === 'gamepadinputchanged') { padListener = f; padCapture = cap; } }, ML_TRACE: true, handleMessage: function (m) { handled.push(m); } };
+var keyListener = null, keyCapture = null;
+var win = { addEventListener: function (ev, f, cap) { if (ev === 'gamepadinputchanged') { padListener = f; padCapture = cap; } if (ev === 'keydown') { keyListener = f; keyCapture = cap; } }, ML_TRACE: true, handleMessage: function (m) { handled.push(m); } };
 var tizen = {
   ApplicationControl: function (op) { this.operation = op; },
   ApplicationControlData: function (k, v) { this.key = k; this.value = v; },
@@ -567,7 +568,45 @@ test('gamepad: a failing pad send does not drop the port', async function () {
   reply(fields(sent[sent.length - 1]).id, {}); await p;
 });
 
-test('trace hides secrets', async function () {
+function key(code, over) {
+  var e = { keyCode: code, key: '', repeat: false, pd: 0, sip: 0, preventDefault: function () { e.pd++; }, stopImmediatePropagation: function () { e.sip++; } };
+  for (var k in (over || {})) e[k] = over[k];
+  keyListener(e);
+  return e;
+}
+function stops() { return sent.map(fields).filter(function (f) { return f.cmd === 'stopStream'; }).length; }
+
+test('remote Back in game stops the stream once per stream and is consumed', async function () {
+  assert.strictEqual(keyCapture, true);
+  sent.length = 0; win.isInGame = true;
+  var e = key(10009);
+  assert.ok(e.pd === 1 && e.sip === 1, 'consumed');
+  assert.strictEqual(stops(), 1);
+  e = key(10009); assert.ok(e.pd === 1 && e.sip === 1);
+  key(10009, { keyCode: 0, key: 'XF86Back', repeat: true });
+  assert.strictEqual(stops(), 1, 'no second stop before the next stream');
+  listener([{ key: 'event', value: 'Connection Established' }]);
+  key(10009, { repeat: true });
+  assert.strictEqual(stops(), 1, 'repeat is ignored');
+  key(10009);
+  assert.strictEqual(stops(), 2, 'stops again after Connection Established');
+  win.isInGame = false;
+  listener([{ key: 'event', value: 'streamTerminated: 0' }]);
+});
+
+test('remote Back outside a game and other keys in game pass through', async function () {
+  sent.length = 0; win.isInGame = false;
+  var e = key(10009);
+  assert.ok(e.pd === 0 && e.sip === 0, 'menu navigation keeps working');
+  assert.strictEqual(stops(), 0);
+  win.isInGame = true;
+  e = key(13);
+  assert.ok(e.pd === 0 && e.sip === 0);
+  assert.strictEqual(stops(), 0);
+  win.isInGame = false;
+});
+
+test('trace hides secrets',async function () {
   var all = logs.join('\n');
   assert.ok(logs.length > 0);
   ['CERTPEM', 'KEYPEM', 'PPKPEM', '1234'].forEach(function (s) { assert.strictEqual(all.indexOf(s), -1, s); });
