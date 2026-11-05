@@ -403,6 +403,16 @@
   }
   // Registered first (mlbridge loads before index.js): the hidden menu must not react to the pad during a stream.
   if (window.addEventListener) window.addEventListener('gamepadinputchanged', function (e) { if (padTimer) e.stopImmediatePropagation(); }, true);
+  // Remote Back (XF86Back, 10009) during a stream leaves the game, like RED. ESC is no longer sent by Back
+  // (the game's pause menu needs a pad/keyboard ESC). Capture on window runs before the element/document listeners of the base UI.
+  var backStopped = false;   // one stop per stream: set by the first Back, cleared on Connection Established
+  if (window.addEventListener) window.addEventListener('keydown', function (e) {
+    if (!(e.keyCode === 10009 || e.key === 'XF86Back') || window.isInGame !== true) return;
+    e.preventDefault(); e.stopImmediatePropagation();
+    if (e.repeat === true || backStopped) return;
+    backStopped = true;
+    window.Module.stopStream().then(null, function () {});
+  }, true);
   function startPads() {
     if (padTimer) return;
     padSlots = []; padTraceFail = false;
@@ -428,7 +438,7 @@
       trace('event', m.event);
       if (m.diag) console.error('[ML-ERROR] ' + m.diag);   // always, not only when tracing
       if (String(m.event).indexOf('streamTerminated') === 0) { resetStats(); stopPads(); }
-      else if (m.event === 'Connection Established') startPads();
+      else if (m.event === 'Connection Established') { backStopped = false; startPads(); }
       if (typeof window.handleMessage === 'function') window.handleMessage(String(m.event));
       return;
     }
