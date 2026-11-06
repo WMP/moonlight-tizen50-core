@@ -183,7 +183,18 @@ int ml_engine_get_stats(ml_engine_stats *out) {
 
 int ml_engine_last_error(char *buf, int len) { return mldiag_last(buf, len); }
 
+/* The player watchdog set a fatal code: report it and end the session (the host then reads the line). */
+static void check_player_fatal(void) {
+  if (!g_running) return;
+  int f = __atomic_exchange_n(&esplus_stats.fatal, 0, __ATOMIC_RELAXED);
+  if (!f) return;
+  MLT("player fatal %d", f);
+  report_failure(f, -1);
+  g_running = 0;
+}
+
 int ml_engine_running(void) {   /* polled every 500 ms by the host: trace only changes */
+  check_player_fatal();
   static int last = -1; int r = g_running;
   if (r != last) { MLT("ml_engine_running -> %d", r); last = r; }
   return r;
@@ -191,7 +202,7 @@ int ml_engine_running(void) {   /* polled every 500 ms by the host: trace only c
 
 void ml_engine_wait(void) {
   MLT("ml_engine_wait");
-  while (g_running) { struct timespec ts = {0, 200000000}; nanosleep(&ts, NULL); }
+  while (g_running) { check_player_fatal(); struct timespec ts = {0, 200000000}; nanosleep(&ts, NULL); }
   MLT("ml_engine_wait -> returned");
 }
 

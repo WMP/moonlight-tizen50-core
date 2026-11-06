@@ -42,6 +42,7 @@ void esplusplayer_set_ready_to_prepare_cb(esplusplayer_handle h, esplusplayer_re
 void esplusplayer_set_prepare_async_done_cb(esplusplayer_handle h, esplusplayer_prepare_async_done_cb c) { (void)h; cb_prepared = c; }
 int esplusplayer_prepare_async(esplusplayer_handle h) { (void)h; return 1; }
 int esplusplayer_start(esplusplayer_handle h) { (void)h; return 1; }
+int esplusplayer_get_state(esplusplayer_handle h) { (void)h; return 2; }
 int esplusplayer_set_ecore_display(esplusplayer_handle h, esplusplayer_display_type t, void *win, int x, int y, int ww, int hh) { (void)h;(void)t;(void)win;(void)x;(void)y;(void)ww;(void)hh; return 1; }
 int esplusplayer_set_display_mode(esplusplayer_handle h, esplusplayer_display_mode m) { (void)h;(void)m; return 1; }
 static int seek_calls; static uint64_t seek_target;

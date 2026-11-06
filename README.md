@@ -178,6 +178,7 @@ player minus `esplusplayer_get_playing_time`: how far ahead of the screen the
 player queue is. A sampler thread reads it every `MLENGINE_DEPTH_POLL_MS` (the
 counters and the sampler also run in release builds). `audio_depth_ms` is the same
 for audio, which keeps its sample-counter PTS, so the two values show A/V drift.
+Audio packets before the first accepted video packet are dropped, and the audio PTS starts at 0 with that first video packet (#22).
 
 **Pacing modes** (`MLENGINE_LATENCY_MODE`, video only):
 
@@ -203,7 +204,16 @@ still submitted, or after a player error, the engine does a flushing
 forces an IDR. At most `MLENGINE_RECOVER_MAX` recoveries per session, at least
 2 s apart; then it stops trying (`recovery_state` 2). A resource conflict (another
 app took the player) is final: only `stop()` leaves it, so it never triggers a
-recovery. The watchdog never ends the session itself.
+recovery. The recovery watchdog never ends the session itself.
+
+**Fatal watchdogs.** These end the session with an `ML-ERROR` line (the host reads
+it from `ml_engine_running()`) and record the raw player state (`state=`). The player
+is prepared after both the video and the audio sink started, and is started once `prepare_async_done` arrives, also with ok=0 (#22). If `start()` never
+succeeds although video packets were submitted for `MLENGINE_START_TIMEOUT_MS`, the
+code is `-110` PLAYER_NOT_STARTED. If playing time stays frozen for
+`MLENGINE_FATAL_STALL_MS` while frames are submitted, the code is `-111`
+PLAYER_STALLED. A playing time that cannot be read counts as frozen. With recovery on, the stall timer restarts after each recovery, so
+`-111` comes only after recovery gave up.
 
 **Knobs.** Environment variables of the engine process, read once when the player
 is created (for example on the CLI harness command line; the .NET host sets none):
@@ -218,6 +228,8 @@ is created (for example on the CLI harness command line; the .NET host sets none
 | `MLENGINE_STALL_MS` | `700` | watchdog: no playing-time progress |
 | `MLENGINE_RECOVER_MAX` | `0` (off) | recoveries per session (3 recommended once validated on a TV) |
 | `MLENGINE_RECOVER_BACK_MS` | `250` | seek target behind the last video PTS |
+| `MLENGINE_START_TIMEOUT_MS` | `5000` (0 = off) | fatal `-110`: no successful `start()` this long after the first video submit |
+| `MLENGINE_FATAL_STALL_MS` | `10000` (0 = off) | fatal `-111`: playing time frozen this long while submitting |
 
 **Overlay.** `toggleStats` in the UI turns on a live overlay (`mlstats` events from
 `ml_engine_get_stats`, every 500 ms); see `pkg/ui/PROTOCOL.md`.

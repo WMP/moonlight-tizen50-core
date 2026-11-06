@@ -24,6 +24,7 @@
 
 extern esplusplayer_handle esplus_create_open(void);
 extern esplusplayer_handle esplus_handle(void);
+extern void esplus_prepare(void);
 extern int esplus_submit(const esplusplayer_es_packet *pkt);
 
 #define ALOG(...) fprintf(stderr, "[audio] " __VA_ARGS__)
@@ -77,7 +78,7 @@ static int ar_init(int audioConfig, const POPUS_MULTISTREAM_CONFIGURATION cfg, v
   return 0;
 }
 
-static void ar_start(void) {}
+static void ar_start(void) { esplus_prepare(); }   /* prepare once video has started too */
 static void ar_stop(void) {}
 static void ar_cleanup(void) {}
 
@@ -89,7 +90,9 @@ static void ar_decodePlay(char *data, int len) {
   if (r != ESPLUSPLAYER_SUBMIT_STATUS_SUCCESS && r != ESPLUSPLAYER_SUBMIT_STATUS_FULL
       && r != ESPLUSPLAYER_SUBMIT_STATUS_NOT_PREPARED)
     ALOG("submit audio failed %d\n", r);
-  s_pts_ns += dur_ns;
+  /* NOT_PREPARED = the packet was not queued (audio waits for the first video packet): the audio PTS starts at 0 with it;
+     FULL and other failures lose their time slot, so they still advance */
+  if (r != ESPLUSPLAYER_SUBMIT_STATUS_NOT_PREPARED) s_pts_ns += dur_ns;
 }
 
 void AudEsplus_FillCallbacks(PAUDIO_RENDERER_CALLBACKS cb) {

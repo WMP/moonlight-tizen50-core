@@ -21,11 +21,17 @@ typedef struct {
   volatile int32_t  audio_depth_ms;
   volatile uint32_t playing_ms;
   volatile uint32_t fps_submitted;  /* submits in the last full second */
+  volatile int      fatal;          /* 0, or an ML_ERR_PLAYER_* code: the engine ends the session */
 } esplus_stats_t;
 
 enum { ESPLUS_LAT_OFF, ESPLUS_LAT_NUDGE, ESPLUS_LAT_ARRIVAL };
 typedef struct { int latency_mode, target_depth_ms, nudge_max_ms_per_s, drop_after_ms,
-                 depth_poll_ms, stall_ms, recover_max, recover_back_ms; } esplus_cfg_t;
+                 depth_poll_ms, stall_ms, recover_max, recover_back_ms,
+                 start_timeout_ms, fatal_stall_ms; } esplus_cfg_t;   /* the last two: 0 = off */
+
+/* engine-local fatal codes (moonlight-common-c uses -100..-104) */
+#define ML_ERR_PLAYER_NOT_STARTED -110   /* no start() success, video submitted for start_timeout_ms */
+#define ML_ERR_PLAYER_STALLED     -111   /* playing time frozen for fatal_stall_ms while submitting */
 
 extern esplus_stats_t esplus_stats;   /* counters: update with __atomic_fetch_add(..., __ATOMIC_RELAXED) */
 extern esplus_cfg_t esplus_cfg;       /* read once per session in esplus_create_open, read-only afterwards */

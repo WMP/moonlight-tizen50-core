@@ -20,8 +20,8 @@ void mldiag_reset(const mldiag_cfg *cfg);                 /* session start: clea
 void mldiag_cc_line(const char *line);                    /* one moonlight-common-c log line */
 void mldiag_video_setup(int fmt, int w, int h, int fps, int rc);
 void mldiag_video_du(int is_idr);                         /* every decode unit */
-void mldiag_submit(int is_video, int ok, int status);     /* esplus_submit result: ok != 0 = success, else the player status (0 = NOT_PREPARED) */
-void mldiag_player(const char *what, int rc);             /* "open", "win", "prep", "pdone" (prepare_async_done) or "start" */
+void mldiag_submit(int is_video, int ok, int status, unsigned long long pts_ms);   /* esplus_submit result: ok != 0 = success, else the player status (0 = NOT_PREPARED); pts_ms of the packet */
+void mldiag_player(const char *what, int rc);             /* "open", "win", "prep", "pdone" (prepare_async_done), "start", "state" (raw esplusplayer_get_state at a fatal stop) or "err" (a player error: only its first time is kept) */
 /* /launch or /resume URL about to be sent: remembers the mode, rikey and rikeyid (not printed). The next
    mldiag_reset(cfg) compares them with the session's key and forgets them. Survives mldiag_reset. */
 void mldiag_note_launch(const char *url);

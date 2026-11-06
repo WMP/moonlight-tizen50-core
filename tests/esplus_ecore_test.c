@@ -41,12 +41,16 @@ void esplusplayer_set_buffer_status_cb(esplusplayer_handle h, esplusplayer_buffe
 void esplusplayer_set_resource_conflicted_cb(esplusplayer_handle h, esplusplayer_resource_conflicted_cb c) { (void)h; cb_conflict = c; }
 void esplusplayer_set_ready_to_prepare_cb(esplusplayer_handle h, esplusplayer_ready_to_prepare_cb c) { (void)h;(void)c; }
 void esplusplayer_set_prepare_async_done_cb(esplusplayer_handle h, esplusplayer_prepare_async_done_cb c) { (void)h; cb_prepared = c; }
-int esplusplayer_prepare_async(esplusplayer_handle h) { (void)h; return 1; }
+static int prep_calls;
+int esplusplayer_prepare_async(esplusplayer_handle h) { (void)h; prep_calls++; return 1; }
 static uint64_t play_ms; static int play_ok = 1, play_calls;
 int esplusplayer_get_playing_time(esplusplayer_handle h, uint64_t *t) { (void)h; play_calls++; *t = play_ms; return play_ok; }
-int esplusplayer_start(esplusplayer_handle h) { (void)h; return 1; }
+static int start_calls, start_ret = 1;
+int esplusplayer_start(esplusplayer_handle h) { (void)h; start_calls++; return start_ret; }
+int esplusplayer_get_state(esplusplayer_handle h) { (void)h; return 2; }
 static int submit_ret = 4;
-int esplusplayer_submit_packet(esplusplayer_handle h, const esplusplayer_es_packet *p) { (void)h;(void)p; return submit_ret; }
+static int sp_calls;
+int esplusplayer_submit_packet(esplusplayer_handle h, const esplusplayer_es_packet *p) { (void)h;(void)p; sp_calls++; return submit_ret; }
 static int disp_w, disp_h, disp_mode = -1;
 int esplusplayer_set_ecore_display(esplusplayer_handle h, esplusplayer_display_type t, void *win, int x, int y, int ww, int hh) { (void)h;(void)t;(void)win;(void)x;(void)y; disp_w = ww; disp_h = hh; return 1; }
 int esplusplayer_set_display_mode(esplusplayer_handle h, esplusplayer_display_mode m) { (void)h; disp_mode = (int)m; return 1; }
@@ -60,10 +64,11 @@ extern int esplus_set_window(int, int);
 extern void esplus_close(void);
 extern int esplus_submit(const esplusplayer_es_packet *pkt);
 extern void esplus_prepare(void);
+static int asub_r(uint64_t pts_ms) { esplusplayer_es_packet p = {ESPLUSPLAYER_STREAM_TYPE_AUDIO, NULL, 1, pts_ms * 1000000ull, 0}; return esplus_submit(&p); }
 static void vsub(uint64_t pts_ms) { esplusplayer_es_packet p = {ESPLUSPLAYER_STREAM_TYPE_VIDEO, NULL, 1, pts_ms * 1000000ull, 0}; esplus_submit(&p); }
 static void asub(uint64_t pts_ms) { esplusplayer_es_packet p = {ESPLUSPLAYER_STREAM_TYPE_AUDIO, NULL, 1, pts_ms * 1000000ull, 0}; esplus_submit(&p); }
 /* start a session on a stubbed, prepared and started player */
-static void begin(void) { esplus_create_open(); cb_prepared(1); esplus_prepare(); play_ms = 0; play_ok = 1; vsub(0); }
+static void begin(void) { esplus_create_open(); cb_prepared(1); esplus_prepare(); esplus_prepare(); play_ms = 0; play_ok = 1; vsub(0); }
 int main(void) {
   /* the host app already holds one ecore reference */
   ecore_cnt = 1;
@@ -151,6 +156,65 @@ int main(void) {
   vsub(1010); cb_error(7); esplus_sample_tick(2000); assert(seek_calls == 0);
   esplus_close();
   unsetenv("MLENGINE_RECOVER_MAX");
+  /* f: prepare done with ok=0 still starts the player, once; a failed start is not retried */
+  start_calls = 0; start_ret = 1; esplus_create_open(); cb_prepared(0); esplus_prepare(); esplus_prepare(); vsub(0); vsub(16);
+  assert(start_calls == 1);
+  esplus_close();
+  start_calls = 0; start_ret = 0; esplus_create_open(); cb_prepared(0); esplus_prepare(); esplus_prepare(); vsub(0); vsub(16); vsub(32);
+  assert(start_calls == 1);
+  esplus_close(); start_ret = 1;
+  /* g: start watchdog */
+  setenv("MLENGINE_DEPTH_POLL_MS", "0", 1);
+  start_ret = 0; esplus_create_open(); cb_prepared(0); esplus_prepare(); esplus_prepare();
+  esplus_sample_tick(1000); esplus_sample_tick(9000); assert(esplus_stats.fatal == 0);   /* no video submit yet */
+  vsub(0); esplus_sample_tick(10000); esplus_sample_tick(14999); assert(esplus_stats.fatal == 0);
+  esplus_sample_tick(15001); assert(esplus_stats.fatal == ML_ERR_PLAYER_NOT_STARTED);
+  esplus_close();
+  esplus_create_open(); assert(esplus_stats.fatal == 0);   /* prepare never done */
+  vsub(0); esplus_sample_tick(1000); esplus_sample_tick(6001); assert(esplus_stats.fatal == ML_ERR_PLAYER_NOT_STARTED);
+  esplus_close();
+  setenv("MLENGINE_START_TIMEOUT_MS", "0", 1);
+  esplus_create_open(); vsub(0); esplus_sample_tick(1000); esplus_sample_tick(900000); assert(esplus_stats.fatal == 0);
+  esplus_close(); unsetenv("MLENGINE_START_TIMEOUT_MS"); start_ret = 1;
+  /* h: fatal stall (recovery off) */
+  begin(); vsub(1000); play_ms = 100; esplus_sample_tick(1000);
+  vsub(1010); esplus_sample_tick(10000); assert(esplus_stats.fatal == 0);
+  vsub(1020); esplus_sample_tick(11001); assert(esplus_stats.fatal == ML_ERR_PLAYER_STALLED);
+  esplus_close();
+  begin(); vsub(1000); play_ms = 100; esplus_sample_tick(1000);
+  for (int i = 1; i <= 30; i++) { play_ms += 100; vsub(1000 + i); esplus_sample_tick(1000 + i * 1000); }
+  assert(esplus_stats.fatal == 0);
+  esplus_close();
+  /* k: audio before the first accepted video packet is not passed to the player */
+  esplus_create_open(); cb_prepared(1); esplus_prepare(); esplus_prepare(); sp_calls = 0;
+  assert(asub_r(0) == 0 && sp_calls == 0);
+  vsub(0); assert(sp_calls == 1 && esplus_stats.submitted == 1);
+  assert(asub_r(20) == 4 && sp_calls == 2);
+  esplus_close();
+  /* i: prepare waits for the second sink (a stream added after prepare_async gives ok=0, #22) */
+  setenv("MLENGINE_DEPTH_POLL_MS", "50", 1);
+  prep_calls = 0; esplus_create_open(); play_calls = 0;
+  esplus_prepare(); usleep(150000); assert(prep_calls == 0 && play_calls == 0);   /* no prepare, no sampler */
+  cb_prepared(1); vsub(0); usleep(150000); assert(play_calls == 0);              /* sampler off: no tick */
+  esplus_prepare(); assert(prep_calls == 1); usleep(150000); assert(play_calls >= 1);
+  esplus_prepare(); assert(prep_calls == 1);
+  esplus_close();
+  setenv("MLENGINE_DEPTH_POLL_MS", "0", 1);
+  /* j: playing time cannot be read while video arrives: counts as frozen */
+  begin(); play_ok = 0; esplus_sample_tick(1000);
+  vsub(10); esplus_sample_tick(11000); assert(esplus_stats.fatal == 0);
+  vsub(20); esplus_sample_tick(11001); assert(esplus_stats.fatal == ML_ERR_PLAYER_STALLED);
+  esplus_close();
+  begin(); play_ok = 0; esplus_sample_tick(1000);   /* no new video submit after the first tick */
+  esplus_sample_tick(900000); assert(esplus_stats.fatal == 0);
+  esplus_close(); play_ok = 1;
+  /* started, but the playing time stays 0 while frames arrive (first frame frozen, #22) */
+  begin(); esplus_sample_tick(1000); vsub(16); esplus_sample_tick(11000); assert(esplus_stats.fatal == 0);
+  vsub(32); esplus_sample_tick(11001); assert(esplus_stats.fatal == ML_ERR_PLAYER_STALLED);
+  esplus_close();
+  /* a static picture with no new frames is not a stall */
+  begin(); play_ms = 100; esplus_sample_tick(1000); esplus_sample_tick(60000); assert(esplus_stats.fatal == 0);
+  esplus_close();
   /* e: sampler thread starts at prepare, stops promptly at close */
   setenv("MLENGINE_DEPTH_POLL_MS", "50", 1);
   begin(); play_calls = 0;

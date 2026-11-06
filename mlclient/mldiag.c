@@ -20,13 +20,16 @@ static char s_first[FIRST_N][LINE_MAX_CC + 1], s_last[LAST_N][LINE_MAX_CC + 1];
 static int s_nlines;                      /* total cc lines seen */
 static char s_out[OUT_MAX]; static int s_code;
 static int s_vfmt, s_vw, s_vh, s_vfps, s_vrc, s_vset;
-static int s_open = -99, s_win = -99, s_prep = -99, s_pdone = -99, s_start = -99;   /* -99 = not reached */
-static int s_first_pkt_ms = -1, s_sub_last_bad;
+static int s_open = -99, s_win = -99, s_prep = -99, s_pdone = -99, s_start = -99, s_state = -99;   /* -99 = not reached */
+static int s_first_pkt_ms = -1, s_sub_last_bad, s_vfail_last, s_afail_last;
+/* absolute now_ms() of the player events, -1 = not reached; printed relative to s_t_prep. Under s_mu (the hot path
+   reads s_t_v1/s_t_a1 atomically and locks only for the first success). */
+static long long s_t_prep = -1, s_t_pdone = -1, s_t_err = -1, s_t_v1 = -1, s_t_a1 = -1, s_vpts1 = -1, s_apts1 = -1;
 static long long s_first_du_ms = -1;
 
 /* hot counters: __atomic */
 enum { C_UNREC, C_DROP, C_WAITIDR, C_BADLEN, C_DECRYPT, C_CORRUPT, C_UNKFT, C_IDRREQ, C_FEC, C_QOVF,
-       C_DROPLIM, C_DU, C_IDR, C_VSUB, C_ASUB, C_SUBFAIL, C_CTLENC, C_CTLFAIL, C_VOK, C_VFAIL, C_VNA, C_PADARR, C_PADST, C_PADFAIL, C_N };
+       C_DROPLIM, C_DU, C_IDR, C_VSUB, C_ASUB, C_SUBFAIL, C_CTLENC, C_CTLFAIL, C_VOK, C_VFAIL, C_VNA, C_PADARR, C_PADST, C_PADFAIL, C_VSUBFAIL, C_ASUBFAIL, C_N };
 static unsigned s_c[C_N];
 static int s_pad_rc;                      /* last failed pad call rc */
 static int s_ctl_iv = -1;                 /* last control-stream IV length, -1 = none */
@@ -81,7 +84,8 @@ void mldiag_reset(const mldiag_cfg *cfg) {
   memset(s_c, 0, sizeof s_c); s_ctl_iv = -1; s_pad_rc = 0;
   memset(s_first, 0, sizeof s_first); memset(s_last, 0, sizeof s_last);
   s_nlines = 0; s_out[0] = 0; s_code = 0;
-  s_vset = 0; s_open = s_win = s_prep = s_pdone = s_start = -99; s_first_pkt_ms = -1; s_sub_last_bad = 0; s_first_du_ms = -1;
+  s_vset = 0; s_open = s_win = s_prep = s_pdone = s_start = s_state = -99; s_first_pkt_ms = -1; s_sub_last_bad = s_vfail_last = s_afail_last = 0;
+  s_t_prep = s_t_pdone = s_t_err = s_t_v1 = s_t_a1 = s_vpts1 = s_apts1 = -1; s_first_du_ms = -1;
   memset(&s_cfg, 0, sizeof s_cfg);
   if (cfg) {
     s_cfg = *cfg;
@@ -147,15 +151,26 @@ void mldiag_video_du(int is_idr) {
   pthread_mutex_unlock(&s_mu);
 }
 
-void mldiag_submit(int is_video, int ok, int status) {
+void mldiag_submit(int is_video, int ok, int status, unsigned long long pts_ms) {
   INC(is_video ? C_VSUB : C_ASUB);
-  if (!ok) { INC(C_SUBFAIL); __atomic_store_n(&s_sub_last_bad, status, __ATOMIC_RELAXED); }
+  if (!ok) {
+    INC(C_SUBFAIL); __atomic_store_n(&s_sub_last_bad, status, __ATOMIC_RELAXED);
+    INC(is_video ? C_VSUBFAIL : C_ASUBFAIL); __atomic_store_n(is_video ? &s_vfail_last : &s_afail_last, status, __ATOMIC_RELAXED);
+  } else if (__atomic_load_n(is_video ? &s_t_v1 : &s_t_a1, __ATOMIC_RELAXED) < 0) {   /* first success of this stream */
+    pthread_mutex_lock(&s_mu);
+    long long *t = is_video ? &s_t_v1 : &s_t_a1;
+    if (*t < 0) { *(is_video ? &s_vpts1 : &s_apts1) = (long long)pts_ms; __atomic_store_n(t, now_ms(), __ATOMIC_RELAXED); }
+    pthread_mutex_unlock(&s_mu);
+  }
 }
 
 void mldiag_player(const char *what, int rc) {
   pthread_mutex_lock(&s_mu);
-  if (!strcmp(what, "open")) s_open = rc; else if (!strcmp(what, "pdone")) s_pdone = rc;
-  else if (!strcmp(what, "win")) s_win = rc; else if (!strcmp(what, "prep")) s_prep = rc; else if (!strcmp(what, "start")) s_start = rc;
+  if (!strcmp(what, "open")) s_open = rc;
+  else if (!strcmp(what, "pdone")) { s_pdone = rc; if (s_t_pdone < 0) s_t_pdone = now_ms(); }
+  else if (!strcmp(what, "err")) { if (s_t_err < 0) s_t_err = now_ms(); }   /* first player error only; the value is in err=<n>/<last> */
+  else if (!strcmp(what, "win")) s_win = rc; else if (!strcmp(what, "prep")) { s_prep = rc; s_t_prep = now_ms(); } else if (!strcmp(what, "start")) s_start = rc;
+  else if (!strcmp(what, "state")) s_state = rc;
   pthread_mutex_unlock(&s_mu);
 }
 
@@ -163,7 +178,8 @@ static const char *code_name(int c) {
   switch (c) {
     case 0: return "GRACEFUL"; case -100: return "NO_VIDEO_TRAFFIC"; case -101: return "NO_VIDEO_FRAME";
     case -102: return "UNEXPECTED_EARLY_TERMINATION"; case -103: return "PROTECTED_CONTENT";
-    case -104: return "FRAME_CONVERSION"; default: return "OTHER";
+    case -104: return "FRAME_CONVERSION";
+    case -110: return "PLAYER_NOT_STARTED"; case -111: return "PLAYER_STALLED"; default: return "OTHER";
   }
 }
 
@@ -197,8 +213,13 @@ void mldiag_fail(int code, int stage, const char *stage_name, int host_feature_f
   if (s_vset) ADD(" | video setup=0x%x %dx%d@%d rc=%d", s_vfmt, s_vw, s_vh, s_vfps, s_vrc);
   else ADD(" | video setup=none");
   ADD(" du=%u idr=%u first_du_ms=%s first_pkt_ms=%s", GET(C_DU), GET(C_IDR), fduS, fpS);
-  ADD(" | player open=%d win=%d prep=%d pdone=%d start=%d vsub=%u asub=%u subfail=%u/%d err=%u/%u", s_open, s_win, s_prep, s_pdone, s_start,
-      GET(C_VSUB), GET(C_ASUB), GET(C_SUBFAIL), s_sub_last_bad, player_errors, player_last_error);
+  ADD(" | player open=%d win=%d prep=%d pdone=%d start=%d state=%d vsub=%u asub=%u subfail=%u/%d vfail=%u/%d afail=%u/%d err=%u/%u", s_open, s_win, s_prep, s_pdone, s_start, s_state,
+      GET(C_VSUB), GET(C_ASUB), GET(C_SUBFAIL), s_sub_last_bad, GET(C_VSUBFAIL), s_vfail_last, GET(C_ASUBFAIL), s_afail_last, player_errors, player_last_error);
+  char tS[4][24], pS[2][24];   /* ms after prepare_async, "-" = not reached */
+  const long long ev[4] = { s_t_pdone, s_t_err, s_t_v1, s_t_a1 }, pv[2] = { s_vpts1, s_apts1 };
+  for (int i = 0; i < 4; i++) { if (ev[i] < 0 || s_t_prep < 0) snprintf(tS[i], sizeof tS[i], "-"); else snprintf(tS[i], sizeof tS[i], "%lld", ev[i] - s_t_prep); }
+  for (int i = 0; i < 2; i++) { if (pv[i] < 0) snprintf(pS[i], sizeof pS[i], "-"); else snprintf(pS[i], sizeof pS[i], "%lld", pv[i]); }
+  ADD(" | prep-t pdone=%s err=%s v1=%s a1=%s vpts1=%s apts1=%s", tS[0], tS[1], tS[2], tS[3], pS[0], pS[1]);
   char ivS[16];
   int civ = __atomic_load_n(&s_ctl_iv, __ATOMIC_RELAXED);
   if (civ < 0) snprintf(ivS, sizeof ivS, "-"); else snprintf(ivS, sizeof ivS, "%d", civ);
