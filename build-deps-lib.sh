@@ -49,6 +49,18 @@ for f in "$BPD"/mbedtls/library/*.c; do
 done
 "$AR" rcs "$OUT/libmbedcrypto_tv.a" "$OUT"/mbedtls/*.o
 
+echo "== libopus (decoder, fixed point) =="
+# Same source set and defines as the fork's CMake target; the static archive lets the linker pull in only the decoder.
+mkdir -p "$OUT/opus"
+O=$MLT/opus
+. "$HERE/mlclient/opus-sources.sh"
+OPUS_SRC=$(opus_sources "$O")
+for f in $OPUS_SRC; do
+  "$GCC" $BASE -std=gnu99 -DUSE_ALLOCA -DHAVE_LRINT -DHAVE_LRINTF -DFIXED_POINT -DOPUS_BUILD \
+    -I"$O/include" -I"$O/src" -I"$O/silk" -I"$O/celt" -I"$O/silk/fixed" -c "$O/$f" -o "$OUT/opus/$(echo "$f" | tr / _ | sed 's/\.c$//').o"
+done
+"$AR" rcs "$OUT/libopus_tv.a" "$OUT"/opus/*.o
+
 echo "== moonlight-common-c (core + PlatformCrypto) =="
 # LC_LOG: Limelog goes to the logMessage callback (the engine counts it in the ML-ERROR line),
 # not only to the host's stderr

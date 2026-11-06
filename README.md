@@ -178,6 +178,7 @@ player minus `esplusplayer_get_playing_time`: how far ahead of the screen the
 player queue is. A sampler thread reads it every `MLENGINE_DEPTH_POLL_MS` (the
 counters and the sampler also run in release builds). `audio_depth_ms` is the same
 for audio, which keeps its sample-counter PTS, so the two values show A/V drift.
+Audio: the host sends Opus; the engine decodes it with libopus (fixed point, from the submodule; `build-deps-lib.sh` makes `libopus_tv.a`) and submits PCM S16LE (`audio/x-raw`) to the same player. The PCM mime value (9) is assumed and must be validated on the TV.
 Audio packets before the first accepted video packet are dropped, and the audio PTS starts at 0 with that first video packet (#22).
 
 **Pacing modes** (`MLENGINE_LATENCY_MODE`, video only):

@@ -29,8 +29,10 @@ static long long s_first_du_ms = -1;
 
 /* hot counters: __atomic */
 enum { C_UNREC, C_DROP, C_WAITIDR, C_BADLEN, C_DECRYPT, C_CORRUPT, C_UNKFT, C_IDRREQ, C_FEC, C_QOVF,
-       C_DROPLIM, C_DU, C_IDR, C_VSUB, C_ASUB, C_SUBFAIL, C_CTLENC, C_CTLFAIL, C_VOK, C_VFAIL, C_VNA, C_PADARR, C_PADST, C_PADFAIL, C_VSUBFAIL, C_ASUBFAIL, C_N };
+       C_DROPLIM, C_DU, C_IDR, C_VSUB, C_ASUB, C_SUBFAIL, C_CTLENC, C_CTLFAIL, C_VOK, C_VFAIL, C_VNA, C_PADARR, C_PADST, C_PADFAIL, C_VSUBFAIL, C_ASUBFAIL, C_ADEC, C_ADECFAIL, C_N };
 static unsigned s_c[C_N];
+static int s_adec_err;                    /* last libopus error */
+static int s_amime = -99;                 /* audio mime of the stream info, -99 = not set */
 static int s_pad_rc;                      /* last failed pad call rc */
 static int s_ctl_iv = -1;                 /* last control-stream IV length, -1 = none */
 /* the noted /launch or /resume (survives mldiag_reset until one reset consumes it) */
@@ -79,9 +81,16 @@ void mldiag_pad(int arrival, int rc) {
   if (rc != 0) { INC(C_PADFAIL); __atomic_store_n(&s_pad_rc, rc, __ATOMIC_RELAXED); }
 }
 
+void mldiag_audio_mime(int mime) { __atomic_store_n(&s_amime, mime, __ATOMIC_RELAXED); }
+
+void mldiag_adec(int ok, int err) {
+  if (ok) { INC(C_ADEC); return; }
+  INC(C_ADECFAIL); __atomic_store_n(&s_adec_err, err, __ATOMIC_RELAXED);
+}
+
 void mldiag_reset(const mldiag_cfg *cfg) {
   pthread_mutex_lock(&s_mu);
-  memset(s_c, 0, sizeof s_c); s_ctl_iv = -1; s_pad_rc = 0;
+  memset(s_c, 0, sizeof s_c); s_ctl_iv = -1; s_pad_rc = 0; s_adec_err = 0; s_amime = -99;
   memset(s_first, 0, sizeof s_first); memset(s_last, 0, sizeof s_last);
   s_nlines = 0; s_out[0] = 0; s_code = 0;
   s_vset = 0; s_open = s_win = s_prep = s_pdone = s_start = s_state = -99; s_first_pkt_ms = -1; s_sub_last_bad = s_vfail_last = s_afail_last = 0;
@@ -213,8 +222,9 @@ void mldiag_fail(int code, int stage, const char *stage_name, int host_feature_f
   if (s_vset) ADD(" | video setup=0x%x %dx%d@%d rc=%d", s_vfmt, s_vw, s_vh, s_vfps, s_vrc);
   else ADD(" | video setup=none");
   ADD(" du=%u idr=%u first_du_ms=%s first_pkt_ms=%s", GET(C_DU), GET(C_IDR), fduS, fpS);
-  ADD(" | player open=%d win=%d prep=%d pdone=%d start=%d state=%d vsub=%u asub=%u subfail=%u/%d vfail=%u/%d afail=%u/%d err=%u/%u", s_open, s_win, s_prep, s_pdone, s_start, s_state,
-      GET(C_VSUB), GET(C_ASUB), GET(C_SUBFAIL), s_sub_last_bad, GET(C_VSUBFAIL), s_vfail_last, GET(C_ASUBFAIL), s_afail_last, player_errors, player_last_error);
+  ADD(" | player open=%d win=%d prep=%d pdone=%d start=%d state=%d vsub=%u asub=%u subfail=%u/%d vfail=%u/%d afail=%u/%d amime=%d adec=%u adec_fail=%u/%d err=%u/%u", s_open, s_win, s_prep, s_pdone, s_start, s_state,
+      GET(C_VSUB), GET(C_ASUB), GET(C_SUBFAIL), s_sub_last_bad, GET(C_VSUBFAIL), s_vfail_last, GET(C_ASUBFAIL), s_afail_last,
+      __atomic_load_n(&s_amime, __ATOMIC_RELAXED), GET(C_ADEC), GET(C_ADECFAIL), __atomic_load_n(&s_adec_err, __ATOMIC_RELAXED), player_errors, player_last_error);
   char tS[4][24], pS[2][24];   /* ms after prepare_async, "-" = not reached */
   const long long ev[4] = { s_t_pdone, s_t_err, s_t_v1, s_t_a1 }, pv[2] = { s_vpts1, s_apts1 };
   for (int i = 0; i < 4; i++) { if (ev[i] < 0 || s_t_prep < 0) snprintf(tS[i], sizeof tS[i], "-"); else snprintf(tS[i], sizeof tS[i], "%lld", ev[i] - s_t_prep); }

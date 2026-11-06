@@ -102,6 +102,8 @@ typedef enum {
   ESPLUSPLAYER_AUDIO_MIME_TYPE_VORBIS = 6,
   ESPLUSPLAYER_AUDIO_MIME_TYPE_DTS = 7,
   ESPLUSPLAYER_AUDIO_MIME_TYPE_OPUS = 8,
+  /* Assumed S16LE (the first PCM entry): must be validated on the TV. */
+  ESPLUSPLAYER_AUDIO_MIME_TYPE_PCM_S16LE = 9,
 } esplusplayer_audio_mime_type;
 
 /* 24 bytes. */
