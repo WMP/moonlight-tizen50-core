@@ -22,12 +22,13 @@ typedef struct {
   volatile uint32_t playing_ms;
   volatile uint32_t fps_submitted;  /* submits in the last full second */
   volatile int      fatal;          /* 0, or an ML_ERR_PLAYER_* code: the engine ends the session */
+  volatile uint32_t audio_written_ms;   /* audio the PulseAudio writer has written (audio_pulse.c, __atomic); read for the A/V drift check */
 } esplus_stats_t;
 
 enum { ESPLUS_LAT_OFF, ESPLUS_LAT_NUDGE, ESPLUS_LAT_ARRIVAL };
 typedef struct { int latency_mode, target_depth_ms, nudge_max_ms_per_s, drop_after_ms,
                  depth_poll_ms, stall_ms, recover_max, recover_back_ms,
-                 start_timeout_ms, fatal_stall_ms; } esplus_cfg_t;   /* the last two: 0 = off */
+                 start_timeout_ms, fatal_stall_ms, rebuild_max; } esplus_cfg_t;   /* the last three: 0 = off */
 
 /* engine-local fatal codes (moonlight-common-c uses -100..-104) */
 #define ML_ERR_PLAYER_NOT_STARTED -110   /* no start() success, video submitted for start_timeout_ms */
@@ -46,6 +47,8 @@ int32_t esplus_correction_ms(void);
 uint32_t esplus_sample_seq(void);
 /* 1 once after a recovery seek (then 0): the video sink must return DR_NEED_IDR. */
 int esplus_take_need_idr(void);
+/* 1 once after a player rebuild (then 0): the video sink restarts its PTS at 0. */
+int esplus_take_rebase(void);
 /* CLOCK_MONOTONIC in ms (sampler, arrival-mode PTS). */
 uint64_t esplus_mono_ms(void);
 

@@ -23,6 +23,7 @@ extern esplusplayer_handle esplus_create_open(void);
 extern esplusplayer_handle esplus_handle(void);
 extern int esplus_set_window(int w, int h);
 extern void esplus_prepare(void);
+extern int esplus_add_video_info(const esplusplayer_video_stream_info *vi);
 extern int esplus_submit(const esplusplayer_es_packet *pkt);
 extern void esplus_close(void);
 
@@ -64,7 +65,7 @@ static int VidDecSetup_(int videoFormat, int width, int height, int redrawRate, 
   if (wrc != 0) { MLT("video setup -> -1 (window)"); return -1; }
   esplusplayer_video_stream_info vi = {NULL, 0, mime, (uint32_t)width, (uint32_t)height,
                                        (uint32_t)width, (uint32_t)height, (uint32_t)s_fps, 1};
-  int ok = esplusplayer_add_video_stream_info(esplus_handle(), &vi);
+  int ok = esplus_add_video_info(&vi);   /* also caches it for a player rebuild */
   MLT("esplusplayer_add_video_stream_info mime=%u -> %d", mime, ok);
   if (!ok) { VLOG("add_video_stream_info failed\n"); return -1; }
   VLOG("setup %dx%d@%d fmt=0x%x\n", width, height, s_fps, videoFormat);
@@ -85,6 +86,10 @@ static int VidDecSetup(int videoFormat, int width, int height, int redrawRate, v
 
 static int VidDecSubmit(PDECODE_UNIT du) {
   mldiag_video_du(du->frameType == FRAME_TYPE_IDR);
+  if (esplus_take_rebase()) {   /* fresh player after a rebuild: its timeline starts at 0 again, like the first start */
+    s_have_base = 0; s_have_prev = 0; s_have_arrival = 0;
+    MLT("video: PTS rebase after a player rebuild");
+  }
   if (esplus_take_need_idr() && du->frameType != FRAME_TYPE_IDR) return DR_NEED_IDR;   /* after a recovery seek */
   /* experimental, off by default: the sampler's depth only refreshes per tick, so skip at most
      one frame per tick, and never the IDR we asked for. */
