@@ -11,6 +11,8 @@
  * schedule ran away > 2x the target, stateful resampling when the context rate differs,
  * resume() of a suspended context, statistics every 5 s. Removed: WASM heap access, slots,
  * sequence gap detection, EMSS backend.
+ * One feed call = one host event (a batch of up to ML_AUDIO_BATCH_MS of audio, see PROTOCOL.md): `received` counts
+ * events, `audio=` is the audio ms received in the window (5000 ms per 5 s window = no loss).
  * API: mlAudioStart(), mlAudioStop(), mlAudioFeed(rate, ch, samples, buffer),
  * mlAudioStats().
  * The names differ from audio.js on purpose: the original audio.js defines startAudioScheduler /
@@ -22,7 +24,7 @@
   var st = null, tot = null, warned = false, lastResume = -Infinity, resumeWarned = false;
 
   function resetStats() {
-    st = { since: Date.now(), received: 0, scheduled: 0, droppedFull: 0, droppedEmpty: 0, notRunning: 0, resyncs: 0, underruns: 0, resumes: 0,
+    st = { since: Date.now(), received: 0, rxMs: 0, scheduled: 0, droppedFull: 0, droppedEmpty: 0, notRunning: 0, resyncs: 0, underruns: 0, resumes: 0,
            hMin: Infinity, hMax: -Infinity, hSum: 0, hist: [0, 0, 0, 0, 0, 0] };
   }
   function resetTotals() { tot = { received: 0, scheduled: 0, dropped: 0, empty: 0, idle: 0, resyncs: 0, underruns: 0, resumes: 0, headroomMs: 0 }; }
@@ -36,7 +38,7 @@
     var avg = st.scheduled > 0 ? st.hSum / st.scheduled : 0, h = st.hist;
     console.log('[mlaudio, statistics] rate=' + streamRate + '/' + (ctx ? ctx.sampleRate : 0) + ' Hz ratio=' + ratio.toFixed(4) +
       ' | latency base=' + fmt(ctx ? ctx.baseLatency * 1000 : NaN) + ' ms output=' + fmt(ctx && ctx.outputLatency ? ctx.outputLatency * 1000 : NaN) + ' ms' +
-      ' | frames received=' + st.received + ' scheduled=' + st.scheduled + ' dropped=' + st.droppedFull + ' empty=' + st.droppedEmpty + ' idle=' + st.notRunning +
+      ' | frames received=' + st.received + ' audio=' + Math.round(st.rxMs) + ' ms scheduled=' + st.scheduled + ' dropped=' + st.droppedFull + ' empty=' + st.droppedEmpty + ' idle=' + st.notRunning +
       ' | resync=' + st.resyncs + ' underrun=' + st.underruns + ' resume=' + st.resumes +
       ' | headroom min=' + fmt(st.hMin) + ' avg=' + fmt(avg) + ' max=' + fmt(st.hMax) + ' ms' +
       ' | histogram <0=' + h[0] + ' 0-10=' + h[1] + ' 10-25=' + h[2] + ' 25-50=' + h[3] + ' 50-100=' + h[4] + ' 100+=' + h[5]);
@@ -130,7 +132,7 @@
     if (!running || !ctx) return;
     rate = +rate; ch = +ch; samples = +samples;
     if (!(rate > 0 && ch > 0 && samples > 0) || !data || data.byteLength < samples * ch * 2) return;
-    st.received++; tot.received++;
+    st.received++; tot.received++; st.rxMs += 1000 * samples / rate;
     if (ctx.state !== 'running') {
       if (ctx.state === 'suspended') tryResume();
       st.notRunning++; tot.idle++; nextTime = 0;

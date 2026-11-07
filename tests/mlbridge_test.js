@@ -879,6 +879,70 @@ test('store: the diagnostic line holds no stored values', function () {
   assert.ok(e.diag().length === 1);
 });
 
+test('mlaudio: new part format (scalars on the data parts), out of order, duplicate part ignored', async function () {
+  var calls = [], h = handled.length, all = bytes(3840);
+  win.mlAudioFeed = function (r, c, n, b) { calls.push([r, c, n, b]); };
+  function part(i, chunk) {
+    listener([{ key: 'id', value: 'au5' }, { key: 'seq', value: String(i) }, { key: 'total', value: '3' }, { key: 'field', value: 'data' }, { key: 'chunk', value: chunk },
+      { key: 'event', value: 'mlaudio' }, { key: 'rate', value: '48000' }, { key: 'ch', value: '2' }, { key: 'samples', value: '960' }]);
+  }
+  part(2, all.slice(3072)); part(0, all.slice(0, 1536)); part(0, all.slice(0, 1536));
+  assert.strictEqual(calls.length, 0);
+  part(1, all.slice(1536, 3072));
+  assert.strictEqual(calls.length, 1);
+  assert.deepStrictEqual(calls[0].slice(0, 3), ['48000', '2', '960']);
+  assert.ok(calls[0][3] instanceof ArrayBuffer && calls[0][3].byteLength === 3840);
+  assert.deepStrictEqual(Array.prototype.slice.call(new Uint8Array(calls[0][3])), all);
+  assert.strictEqual(handled.length, h);
+  delete win.mlAudioFeed;
+});
+
+test('startRequest: a[21] audioJitter sets _mlAudioTargetMs before mlAudioStart; 0 leaves it; _mlAudioBatchMs is forwarded', async function () {
+  var seen = [];
+  win.mlAudioStart = function () { seen.push(win._mlAudioTargetMs); };
+  async function go(jit, batch) {
+    var a = ['host', 47989, 1920, 1080, 60, 20000, 'abcd', 7]; a[21] = jit;
+    win._mlAudioBatchMs = batch;
+    sent.length = 0;
+    var p = win.sendMessage('startRequest', a);
+    var f = fields(sent[0]); reply(f.id, {}); await p;
+    return f;
+  }
+  var f = await go(150, undefined);
+  assert.deepStrictEqual(seen, [150]); assert.strictEqual(f.audioBatchMs, undefined);
+  f = await go(0, 40);
+  assert.deepStrictEqual(seen, [150, 150]); assert.strictEqual(f.audioBatchMs, '40');
+  f = await go(undefined, 0);
+  assert.strictEqual(f.audioBatchMs, '0');
+  f = await go(undefined, -1);
+  assert.strictEqual(f.audioBatchMs, undefined);
+  delete win.mlAudioStart; delete win._mlAudioBatchMs; delete win._mlAudioTargetMs;
+});
+
+test('overlay shows the host audio counters', async function () {
+  await toggleStats(undefined, 'true');
+  listener(STATS.concat([{ key: 'ain', value: '1000' }, { key: 'asent', value: '250' }, { key: 'adrop', value: '3' }, { key: 'afail', value: '1' }]));
+  assert.ok(/host audio in 1000 sent 250 drop 3 fail 1/.test(byId.mlstats.textContent), byId.mlstats.textContent);
+  listener(STATS);
+  assert.ok(!/host audio/.test(byId.mlstats.textContent));
+  await toggleStats(undefined, 'false');
+});
+
+test('mlaudio.js: the statistics line holds the received audio ms', async function () {
+  var wlogs = [], w = { AudioContext: function () {
+    this.sampleRate = 48000; this.state = 'running'; this.destination = {}; this.currentTime = 1;
+    this.createBuffer = function (ch, n) { var d = []; for (var c = 0; c < ch; c++) d.push(new Float32Array(n)); return { duration: n / 48000, getChannelData: function (c) { return d[c]; } }; };
+    this.createBufferSource = function () { return { connect: function () {}, start: function () {} }; };
+    this.close = function () {};
+  } };
+  vm.runInNewContext(fs.readFileSync(__dirname + '/../pkg/ui/mlaudio.js', 'utf8'),
+    { window: w, console: { log: function () { wlogs.push([].join.call(arguments, ' ')); }, warn: function () {} }, Date: Date, Int16Array: Int16Array, Float32Array: Float32Array, Math: Math });
+  w.mlAudioStart();
+  for (var i = 0; i < 3; i++) w.mlAudioFeed(48000, 2, 960, new ArrayBuffer(3840));   // 3 batches of 20 ms
+  w.mlAudioStop();
+  assert.ok(wlogs.some(function (l) { return /\[mlaudio, statistics\].*received=3 audio=60 ms/.test(l); }), wlogs.join('\n'));
+});
+
 (async function () {
   var fail = 0;
   for (var i = 0; i < tests.length; i++) {

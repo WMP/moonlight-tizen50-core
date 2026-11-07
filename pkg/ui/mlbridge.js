@@ -184,6 +184,7 @@
       while (auOrder.length > AU_PARTIAL_MAX) delete partial[auOrder.shift()];
     }
     var a = partial[m.id] || (partial[m.id] = { total: +m.total, n: 0, seqs: {} });
+    if (m.event !== undefined && !a.meta) a.meta = { event: m.event, rate: m.rate, ch: m.ch, samples: m.samples };   // new audio format: scalars ride on the data parts
     if (!a.seqs[m.seq]) { a.seqs[m.seq] = { field: m.field, chunk: m.chunk }; a.n++; }
     if (a.n < a.total) return null;
     delete partial[m.id];
@@ -199,6 +200,7 @@
         if (c0.field === 'data' && typeof c0.chunk !== 'string') { bin.set(c0.chunk, off); off += c0.chunk.length; }
         else out[c0.field] = (out[c0.field] || '') + c0.chunk;
       }
+      if (a.meta) { out.event = a.meta.event; out.rate = a.meta.rate; out.ch = a.meta.ch; out.samples = a.meta.samples; }
       out.data = bin;
       return out;
     }
@@ -282,6 +284,7 @@
       'under/over ' + m.uo + '\n' +
       'errors ' + m.err + '  recoveries ' + m.rec + '\n' +
       'play ' + (Number(m.play) / 1000).toFixed(1) + ' s';
+    if (m.asent !== undefined) el.textContent += '\nhost audio in ' + m.ain + ' sent ' + m.asent + ' drop ' + m.adrop + ' fail ' + m.afail;
     if (typeof window.mlAudioStats === 'function') {   // the host does not know the UI audio scheduler
       var a = window.mlAudioStats();
       el.textContent += '\nweb audio rx ' + a.received + ' sched ' + a.scheduled + ' drop ' + a.dropped + ' empty ' + a.empty +
@@ -506,14 +509,18 @@
     httpInit: function (cert, key, uniqueId) { return call('httpInit', { cert: cert, key: key, uniqueId: uniqueId }); },
     startRequest: function () {
       var a = arguments;
+      var j = parseInt(a[21], 10);   // audioJitter (ms): the target of the UI audio scheduler
+      if (j > 0) window._mlAudioTargetMs = j;
       audioCall('mlAudioStart');   // user-gesture flow: the autoplay policy needs it here
       padFlipAB = !!a[16]; padFlipXY = !!a[17];   // a[14] rumble and a[15] mouse emulation: not ported
       // host, httpPort, w, h, fps, bitrate, rikey, rikeyid, appVer, gfeVer, rtspUrl, then a[11] codecMode,
-      // a[19] audioConfig (a[18] is audioBackend), a[24] videoCodec, a[25] hdrMode, a[26] fullRange
+      // a[19] audioConfig (a[18] is audioBackend, a[20] audioSync, a[21] audioJitter), a[24] videoCodec, a[25] hdrMode, a[26] fullRange
+      var bm = window._mlAudioBatchMs;   // optional: ms of audio per host event (0 = per frame)
       return call('startStream', {
         host: a[0], w: a[2], h: a[3], fps: a[4], bitrate: a[5], rikey: a[6], rikeyid: a[7],
         appVer: a[8], gfeVer: a[9], rtspUrl: a[10], codecMode: a[11],
-        audioConfig: a[19], videoCodec: a[24], hdr: String(!!a[25]), fullRange: String(!!a[26])
+        audioConfig: a[19], videoCodec: a[24], hdr: String(!!a[25]), fullRange: String(!!a[26]),
+        audioBatchMs: (typeof bm === 'number' && isFinite(bm) && bm >= 0) ? String(bm) : undefined
       });
     },
     stopRequest: function () { stopPads(); audioCall('mlAudioStop'); return call('stopStream', {}); },
