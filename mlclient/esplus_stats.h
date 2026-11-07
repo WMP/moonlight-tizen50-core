@@ -22,6 +22,7 @@ typedef struct {
   volatile uint32_t playing_ms;
   volatile uint32_t fps_submitted;  /* submits in the last full second */
   volatile int      fatal;          /* 0, or an ML_ERR_PLAYER_* code: the engine ends the session */
+  volatile uint32_t audio_written_ms;   /* audio the PulseAudio writer has written (audio_pulse.c, __atomic); read for the A/V drift check */
 } esplus_stats_t;
 
 enum { ESPLUS_LAT_OFF, ESPLUS_LAT_NUDGE, ESPLUS_LAT_ARRIVAL };

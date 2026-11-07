@@ -152,7 +152,7 @@ parts and replacing the EMSS video/audio path with a native engine built on
 | | |
 |---|---|
 | **Reused unchanged** | `moonlight-common-c` (streaming core), `libgamestream` (pairing/HTTP), the web UI (host list, pairing, app grid, settings) |
-| **Replaced** | EMSS video → `video_esplus.c`, EMSS/WebAudio → `audio_opus.c`, the WASM transport → a message-port bridge, cert handling → native |
+| **Replaced** | EMSS video → `video_esplus.c`, EMSS/WebAudio → `audio_opus.c` + `audio_pulse.c`, the WASM transport → a message-port bridge, cert handling → native |
 | **New** | `esplusplayer_tv50.h` (the TV's ES-player C API), the message-port bridge + JS shim, `esplus_player.c`, `input_evdev.c`, `gs_client.c` (+ own `xml_search`), and the build/packaging |
 
 ## Architecture
@@ -176,10 +176,19 @@ menu/launcher.
 **Queue depth.** `depth_ms` = the PTS of the last video packet accepted by the
 player minus `esplusplayer_get_playing_time`: how far ahead of the screen the
 player queue is. A sampler thread reads it every `MLENGINE_DEPTH_POLL_MS` (the
-counters and the sampler also run in release builds). `audio_depth_ms` is the same
-for audio, which keeps its sample-counter PTS, so the two values show A/V drift.
-Audio: the host sends Opus; the engine decodes it with libopus (fixed point, from the submodule; `build-deps-lib.sh` makes `libopus_tv.a`) and submits PCM S16LE (`audio/x-raw`) to the same player. The PCM mime value (9) is assumed and must be validated on the TV.
-Audio packets before the first accepted video packet are dropped, and the audio PTS starts at 0 with that first video packet (#22).
+counters and the sampler also run in release builds). `audio_depth_ms` is always 0: the
+player has no audio stream. The sampler logs the A/V drift instead (audio written to
+PulseAudio minus video playing time, relative to the first sample; over 250 ms it is traced,
+the maximum is in the `aout` section of the `ML-ERROR` line).
+**Audio.** The esplusplayer carries video only. Platform limitation: the TV player rejects engine-fed
+audio streams (both Opus and raw PCM). The host sends Opus; the engine decodes it with libopus (fixed
+point, from the submodule; `build-deps-lib.sh` makes `libopus_tv.a`) and writes the PCM S16LE to
+PulseAudio with `libpulse-simple`, loaded at run time with `dlopen` (`audio_pulse.c`; no link-time
+dependency). If PulseAudio is not available, the stream goes on without sound. The PulseAudio buffer
+is set with `MLENGINE_AUDIO_LATENCY_MS` (default 40).
+
+**Start retry.** If no video packet has reached the player 300 ms after prepare, the engine asks for an IDR frame again
+(every 500 ms, at most 10 times): the first request can be lost before the host pipeline is up.
 
 **Pacing modes** (`MLENGINE_LATENCY_MODE`, video only):
 
@@ -209,7 +218,7 @@ recovery. The recovery watchdog never ends the session itself.
 
 **Fatal watchdogs.** These end the session with an `ML-ERROR` line (the host reads
 it from `ml_engine_running()`) and record the raw player state (`state=`). The player
-is prepared after both the video and the audio sink started, and is started once `prepare_async_done` arrives, also with ok=0 (#22). If `start()` never
+is prepared when the video sink starts, and is started once `prepare_async_done` arrives, also with ok=0 (#22). If `start()` never
 succeeds although video packets were submitted for `MLENGINE_START_TIMEOUT_MS`, the
 code is `-110` PLAYER_NOT_STARTED. If playing time stays frozen for
 `MLENGINE_FATAL_STALL_MS` while frames are submitted, the code is `-111`
@@ -230,6 +239,7 @@ is created (for example on the CLI harness command line; the .NET host sets none
 | `MLENGINE_RECOVER_MAX` | `0` (off) | recoveries per session (3 recommended once validated on a TV) |
 | `MLENGINE_RECOVER_BACK_MS` | `250` | seek target behind the last video PTS |
 | `MLENGINE_START_TIMEOUT_MS` | `5000` (0 = off) | fatal `-110`: no successful `start()` this long after the first video submit |
+| `MLENGINE_AUDIO_LATENCY_MS` | `40` | PulseAudio buffer (target length) in ms; `0` = server default |
 | `MLENGINE_FATAL_STALL_MS` | `10000` (0 = off) | fatal `-111`: playing time frozen this long while submitting |
 
 **Overlay.** `toggleStats` in the UI turns on a live overlay (`mlstats` events from

@@ -1,14 +1,14 @@
 /*
- * esplus_player.c - one shared esplusplayer instance for both the video and audio
- * sinks (the TV allows only one player per process; a second create() deletes the
- * first). moonlight-common-c calls the sinks in this order (connection stages in
- * Connection.c): video setup and video start (stage 9), then audio init and audio
- * start (stage 10). So: the first caller creates+opens the player; audio and video
- * each add their stream info; the window is attached in video setup (it has the
- * dimensions); prepare runs on the second esplus_prepare() call (video start and
- * audio start each make one), by which point both streams are added; start runs
- * from the first submit after prepare_async_done.
- * This gives audio and video one clock (tight A/V sync), like the fork's EMSS path.
+ * esplus_player.c - one shared esplusplayer instance for the VIDEO sink (the TV allows
+ * only one player per process; a second create() deletes the first). The player has
+ * only a video stream: platform limitation: the TV player rejects engine-fed audio
+ * streams (both Opus and raw PCM), so audio goes to PulseAudio (audio_pulse.c).
+ * moonlight-common-c calls the sinks in this order (connection stages in Connection.c):
+ * video setup and video start (stage 9), then audio init and audio start (stage 10).
+ * So: video setup creates+opens the player, attaches the window (it has the dimensions)
+ * and adds the video stream info; prepare runs on the first esplus_prepare() call (video
+ * start); start runs from the first submit after prepare_async_done.
+ * The sampler also logs the A/V drift (audio written to PulseAudio vs the video playing time).
  */
 #include <pthread.h>
 #include <stdint.h>
@@ -39,13 +39,15 @@ void ecore_wl2_display_screen_size_get(void *d, int *w, int *h) __attribute__((w
 void ecore_wl2_display_sync(void *d) __attribute__((weak));   /* roundtrip: the outputs are known after it */
 void *ecore_main_loop_thread_safe_call_sync(void *(*cb)(void *data), void *data);
 
+extern void LiRequestIdrFrame(void);   /* moonlight-common-c: only sets an event, thread-safe */
+
 #define PLOG(...) fprintf(stderr, "[esplus] " __VA_ARGS__)
 
 static esplusplayer_handle s_pl;
 static void *s_disp, *s_win;
 static pthread_mutex_t s_lock = PTHREAD_MUTEX_INITIALIZER;
 static volatile int s_prepared, s_prepare_ok, s_started;   /* s_started: start() succeeded */
-static int s_prepare_calls;   /* esplus_prepare() calls this session, under s_lock */
+static int s_prepare_called;   /* prepare_async was started this session, under s_lock */
 static int s_start_tried;   /* start() is tried once per session, under s_lock */
 
 esplus_stats_t esplus_stats;
@@ -80,7 +82,7 @@ static void load_cfg(void) {
       esplus_cfg.start_timeout_ms, esplus_cfg.fatal_stall_ms);
 }
 
-static uint64_t s_last_video_pts_ms, s_last_audio_pts_ms;   /* under s_lock */
+static uint64_t s_last_video_pts_ms;   /* under s_lock */
 static uint64_t s_fps_t0;     /* start of the current fps second; 0 = not started */
 static uint32_t s_fps_sub0;
 
@@ -127,6 +129,34 @@ static unsigned s_vtries, s_stall_vtries;   /* video packets passed to submit_pa
 static uint64_t s_start_t0;  /* tick time of the first tick after a video submit while not started; 0 = none */
 static int s_fatal_set;
 
+/* A/V drift (log only). drift = (audio written - video playing time) - baseline; the baseline is that
+   difference at the first tick with playing time > 0, so it cancels the PulseAudio buffer and the late first
+   video frame. Under s_lock. */
+static int s_drift_have, s_drift_sign;
+static int64_t s_drift_base;
+static uint64_t s_drift_t, s_drift_log_t;
+#define DRIFT_LOG_MS 250
+static void check_drift(uint64_t play_ms, uint64_t now_ms) {
+  if (play_ms == 0 || (s_drift_t && now_ms - s_drift_t < 1000)) return;
+  s_drift_t = now_ms;
+  int64_t diff = (int64_t)__atomic_load_n(&esplus_stats.audio_written_ms, __ATOMIC_RELAXED) - (int64_t)play_ms;
+  if (!s_drift_have) { s_drift_have = 1; s_drift_base = diff; return; }
+  int64_t d = diff - s_drift_base, a = d < 0 ? -d : d;
+  mldiag_drift((int)d);
+  if (a > DRIFT_LOG_MS) {
+    int sign = d < 0 ? -1 : 1;
+    if (sign != s_drift_sign || now_ms - s_drift_log_t >= 5000) { MLT("A/V drift %lld ms (audio ahead if > 0)", (long long)d); s_drift_log_t = now_ms; }
+    s_drift_sign = sign;
+  } else s_drift_sign = 0;
+}
+
+/* IDR request retry at start: the first request can be lost before the host's pipeline is up. */
+static uint64_t s_idr_t0, s_idr_last;
+static int s_idr_n;
+#define IDR_FIRST_MS 300
+#define IDR_EVERY_MS 500
+#define IDR_MAX 10
+
 /* The session cannot play: engine_api.c ends it with this code (once). */
 static void set_fatal(int code, const char *why) {
   if (s_fatal_set) return;
@@ -169,6 +199,7 @@ static int recover(const char *why, uint64_t now_ms) {
 
 /* One sampler step; the thread calls it with the monotonic clock, the host test with a fake one. */
 void esplus_sample_tick(uint64_t now_ms) {
+  int want_idr = 0;
   pthread_mutex_lock(&s_lock);
   if (s_pl && s_started) {
     const char *why = NULL;
@@ -176,7 +207,6 @@ void esplus_sample_tick(uint64_t now_ms) {
     if (esplusplayer_get_playing_time(s_pl, &play)) {
       esplus_stats.playing_ms = (uint32_t)play;
       esplus_stats.depth_ms = (int32_t)(s_last_video_pts_ms - play);
-      esplus_stats.audio_depth_ms = (int32_t)(s_last_audio_pts_ms - play);
       if (!s_fps_t0) { s_fps_t0 = now_ms; s_fps_sub0 = esplus_stats.submitted; }
       else if (now_ms - s_fps_t0 >= 1000) {
         esplus_stats.fps_submitted = esplus_stats.submitted - s_fps_sub0;
@@ -184,8 +214,8 @@ void esplus_sample_tick(uint64_t now_ms) {
       }
       if (play > 0) nudge(esplus_stats.depth_ms, now_ms);
       s_tick_prev_ms = now_ms;
-      MLT("stats depth=%dms audio=%dms fps=%u submitted=%u", esplus_stats.depth_ms,
-          esplus_stats.audio_depth_ms, esplus_stats.fps_submitted, esplus_stats.submitted);
+      MLT("stats depth=%dms fps=%u submitted=%u", esplus_stats.depth_ms, esplus_stats.fps_submitted, esplus_stats.submitted);
+      check_drift(play, now_ms);
       /* stall: playing time stopped while we keep submitting. Armed after the first non-zero time. */
       if (!s_stall_t || play != s_stall_play) {
         s_stall_play = play; s_stall_t = now_ms; s_stall_sub = esplus_stats.submitted; s_stall_vtries = s_vtries;
@@ -213,8 +243,17 @@ void esplus_sample_tick(uint64_t now_ms) {
     if (!s_start_t0) s_start_t0 = now_ms;
     else if (now_ms - s_start_t0 > (uint64_t)esplus_cfg.start_timeout_ms) set_fatal(ML_ERR_PLAYER_NOT_STARTED, "not started");
   }
+  /* no video packet reached the player yet: ask for an IDR again (after the lock is released) */
+  if (s_pl && s_prepare_called && s_vtries == 0 && s_idr_n < IDR_MAX) {
+    if (!s_idr_t0) s_idr_t0 = now_ms;
+    else if (now_ms - s_idr_t0 > IDR_FIRST_MS && (!s_idr_last || now_ms - s_idr_last >= IDR_EVERY_MS)) {
+      s_idr_last = now_ms; s_idr_n++; want_idr = 1;
+      mldiag_idr_retry(); MLT("no video yet: IDR request retry #%d", s_idr_n);
+    }
+  }
   s_tick_seq++;
   pthread_mutex_unlock(&s_lock);
+  if (want_idr) LiRequestIdrFrame();
 }
 
 uint64_t esplus_mono_ms(void) {
@@ -289,7 +328,7 @@ esplusplayer_handle esplus_create_open(void) {
     s_conflicted = 0; s_error_pending = 0; s_need_idr = 0;
     s_stall_play = s_stall_t = s_last_recover_ms = 0; s_stall_sub = 0;
     s_stall_armed = s_recover_count = s_have_recover = s_off_logged = 0;
-    s_prepare_calls = 0; s_start_tried = 0; s_vtries = s_stall_vtries = 0; s_start_t0 = 0; s_fatal_set = 0;
+    s_prepare_called = 0; s_start_tried = 0; s_drift_have = 0; s_drift_t = 0; s_drift_sign = 0; s_drift_log_t = 0; s_idr_t0 = s_idr_last = 0; s_idr_n = 0; s_vtries = s_stall_vtries = 0; s_start_t0 = 0; s_fatal_set = 0;
     s_pl = esplusplayer_create();
     MLT("esplusplayer_create -> %p", (void *)s_pl);
     if (s_pl) {
@@ -391,14 +430,12 @@ int esplus_set_window(int w, int h) {
   return 0;
 }
 
-/* called from video start and from audio start; prepares on the second call (both streams added). */
+/* called from video start; prepares on the first call, later calls do nothing. */
 void esplus_prepare(void) {
-  /* a stream info added after prepare_async started gives prepare_async_done ok=0 + error 0xfe6c1008
-     and a frozen picture (#22): prepare on the second call, when both sinks have started */
   pthread_mutex_lock(&s_lock);
-  int n = ++s_prepare_calls;
+  int done = s_prepare_called; s_prepare_called = 1;
   pthread_mutex_unlock(&s_lock);
-  if (n != 2) { MLT("esplus_prepare: %s", n < 2 ? "waiting for the other sink" : "already done"); return; }
+  if (done) { MLT("esplus_prepare: already done"); return; }
   int ok = esplusplayer_prepare_async(s_pl);
   MLT("esplus_prepare prepare_async -> %d", ok);
   mldiag_player("prep", ok);
@@ -406,7 +443,7 @@ void esplus_prepare(void) {
   sampler_start();
 }
 
-/* submit + start-once-prepared; safe to call from the video and audio threads. */
+/* submit + start-once-prepared. */
 int esplus_submit(const esplusplayer_es_packet *pkt) {
   pthread_mutex_lock(&s_lock);
   /* a prepare that reports ok=0 has already shown the first frame (#22): try start() anyway, once */
@@ -415,17 +452,14 @@ int esplus_submit(const esplusplayer_es_packet *pkt) {
     int ok = esplusplayer_start(s_pl); s_started = ok ? 1 : 0;
     PLOG("start -> %d (prepare ok=%d)\n", ok, s_prepare_ok); MLT("esplus_start -> %d", ok); mldiag_player("start", ok);
   }
-  /* audio waits for the first video packet so both timelines start at PTS 0 together
-     (#22: apts1=1175 vs vpts1=0, then prepare failed) */
-  int r = pkt->type == ESPLUSPLAYER_STREAM_TYPE_AUDIO && esplus_stats.submitted == 0
-        ? ESPLUSPLAYER_SUBMIT_STATUS_NOT_PREPARED : esplusplayer_submit_packet(s_pl, pkt);
+  int r = esplusplayer_submit_packet(s_pl, pkt);
   if (pkt->type == ESPLUSPLAYER_STREAM_TYPE_VIDEO) s_vtries++;
   mldiag_submit(pkt->type == ESPLUSPLAYER_STREAM_TYPE_VIDEO, r == ESPLUSPLAYER_SUBMIT_STATUS_SUCCESS, r, pkt->pts / 1000000);
   if (r == ESPLUSPLAYER_SUBMIT_STATUS_SUCCESS) {
     uint64_t ms = pkt->pts / 1000000;
     if (pkt->type == ESPLUSPLAYER_STREAM_TYPE_VIDEO) {
       s_last_video_pts_ms = ms; __atomic_fetch_add(&esplus_stats.submitted, 1, __ATOMIC_RELAXED);
-    } else s_last_audio_pts_ms = ms;
+    }
   }
   /* shortcut: sample per-frame trace (first 30, then every 300th, plus each change of the
      result); raise the rate here if a hang needs every frame. Logging every failure filled
@@ -447,8 +481,8 @@ void esplus_close(void) {
     MLT("esplusplayer_stop -> %d, close -> %d", st, cl);
     s_pl = NULL;
   }
-  s_prepared = s_prepare_ok = s_started = 0; s_start_tried = 0; s_prepare_calls = 0;
-  s_last_video_pts_ms = s_last_audio_pts_ms = 0; s_fps_t0 = 0;
+  s_prepared = s_prepare_ok = s_started = 0; s_start_tried = 0; s_prepare_called = 0;
+  s_last_video_pts_ms = 0; s_fps_t0 = 0;
   s_corr_us = 0; s_corr_ms = 0; s_tick_prev_ms = 0;
   pthread_mutex_unlock(&s_lock);
   /* Release only what esplus_set_window took: an unbalanced ecore_shutdown() would

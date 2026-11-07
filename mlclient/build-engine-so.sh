@@ -13,8 +13,8 @@ C=$MLT/moonlight-common-c; TVL=$DEPS/tv-libs/usr/lib
 # BUILD_VARIANT: release (default, -O2) or debug (-O0 -g, MLT_TRACE trace on).
 BUILD_VARIANT=${BUILD_VARIANT:-release}
 case "$BUILD_VARIANT" in
-  release) OPT="-O2"; LOPT="-O2"; DBGLIB="" ;;
-  debug)   OPT="-O0 -g -DMLT_TRACE"; LOPT="-O0 -g"; DBGLIB="-ldl" ;;
+  release) OPT="-O2"; LOPT="-O2" ;;
+  debug)   OPT="-O0 -g -DMLT_TRACE"; LOPT="-O0 -g" ;;
   *) echo "BUILD_VARIANT must be debug or release, got: $BUILD_VARIANT" >&2; exit 1 ;;
 esac
 echo "engine variant: $BUILD_VARIANT"
@@ -25,7 +25,7 @@ FLAGS="--sysroot=$DEPS/sysroot $ARCH $OPT -std=gnu11 -Wall -Wextra -fPIC"
 INC="-I$C/src -I$MLT/opus/include -I$OUT -I$HERE -I$MLT/libgamestream -I$BPD/ossl-inc -I$BPD/curl759/include"
 
 # engine objects (everything except the thin main.c)
-for src in cert_init engine_api engine_ui engine_pad video_esplus audio_opus esplus_player gs_client input_evdev mldiag ctlcrypto; do
+for src in cert_init engine_api engine_ui engine_pad video_esplus audio_opus audio_pulse esplus_player gs_client input_evdev mldiag ctlcrypto; do
   "$GCC" $FLAGS $INC -c "$HERE/$src.c" -o "$OUT/$src.o"
 done
 
@@ -39,12 +39,12 @@ done
 "$GCC" --sysroot=$DEPS/sysroot $ARCH $LOPT -shared -Wl,-soname,libmlengine.so \
   -Wl,--hash-style=both -Wl,--wrap=PltEncryptMessage \
   -o "$OUT/libmlengine.so" \
-  "$OUT"/cert_init.o "$OUT"/engine_api.o "$OUT"/engine_ui.o "$OUT"/engine_pad.o "$OUT"/video_esplus.o "$OUT"/audio_opus.o \
+  "$OUT"/cert_init.o "$OUT"/engine_api.o "$OUT"/engine_ui.o "$OUT"/engine_pad.o "$OUT"/video_esplus.o "$OUT"/audio_opus.o "$OUT"/audio_pulse.o \
   "$OUT"/esplus_player.o "$OUT"/gs_client.o "$OUT"/input_evdev.o "$OUT"/mldiag.o "$OUT"/ctlcrypto.o \
   "$DEPSBUILD"/obj/*.o "$DEPSBUILD"/gs/*.o "$DEPSBUILD/libmbedcrypto_tv.a" "$DEPSBUILD/libopus_tv.a" \
   -L"$TVL" -Wl,-rpath-link,"$TVL" -Wl,--allow-shlib-undefined -Wl,--unresolved-symbols=ignore-in-shared-libs \
   -l:libesplusplayer.so -l:libecore_wl2.so.1 -l:libecore.so.1 \
-  -l:libssl.so.1.0.0 -l:libcrypto.so.1.0.0 -l:libcurl.so.4 -lpthread $DBGLIB
+  -l:libssl.so.1.0.0 -l:libcrypto.so.1.0.0 -l:libcurl.so.4 -lpthread -ldl
 
 # thin exe: main.o + the .so
 "$GCC" $FLAGS $INC -c "$HERE/main.c" -o "$OUT/main.o"

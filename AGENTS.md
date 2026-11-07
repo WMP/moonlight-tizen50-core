@@ -45,6 +45,7 @@ The point of this repo is to improve the client itself:
   The same script also runs `tests/mldiag_test.c` (the `ML-ERROR` line); run it after touching `mlclient/mldiag.c`.
   It also runs `tests/engine_pad_test.c` (gamepad calls, clamps, `pad` counters); run it after touching `mlclient/engine_pad.c`.
   It also runs `tests/audio_opus_test.c` (Opus decode to PCM); run it after touching `mlclient/audio_opus.c`.
+  It also runs `tests/audio_pulse_test.c` (PulseAudio writer, no libpulse); run it after touching `mlclient/audio_pulse.c`.
 - UI bridge self-test (needs only node): `node tests/mlbridge_test.js`. Run it after touching
   `pkg/ui/mlbridge.js`.
 - `BUILD_VARIANT=debug|release` (default `release`) is honoured by

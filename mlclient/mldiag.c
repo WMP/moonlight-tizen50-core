@@ -29,10 +29,13 @@ static long long s_first_du_ms = -1;
 
 /* hot counters: __atomic */
 enum { C_UNREC, C_DROP, C_WAITIDR, C_BADLEN, C_DECRYPT, C_CORRUPT, C_UNKFT, C_IDRREQ, C_FEC, C_QOVF,
-       C_DROPLIM, C_DU, C_IDR, C_VSUB, C_ASUB, C_SUBFAIL, C_CTLENC, C_CTLFAIL, C_VOK, C_VFAIL, C_VNA, C_PADARR, C_PADST, C_PADFAIL, C_VSUBFAIL, C_ASUBFAIL, C_ADEC, C_ADECFAIL, C_N };
+       C_DROPLIM, C_DU, C_IDR, C_VSUB, C_ASUB, C_SUBFAIL, C_CTLENC, C_CTLFAIL, C_VOK, C_VFAIL, C_VNA, C_PADARR, C_PADST, C_PADFAIL, C_VSUBFAIL, C_ASUBFAIL, C_ADEC, C_ADECFAIL, C_IDRRETRY, C_N };
 static unsigned s_c[C_N];
 static int s_adec_err;                    /* last libopus error */
-static int s_amime = -99;                 /* audio mime of the stream info, -99 = not set */
+/* audio output: 0 not reached, 1 PulseAudio open, 2 none */
+static int s_aout, s_aout_native, s_aout_reason, s_aout_err;   /* reason: 1 dlopen, 2 dlsym, 3 new; err = PA error of the failed pa_simple_new */
+static unsigned s_aout_lat_us, s_aout_written_ms, s_aout_perr;
+static int s_drift_max;                   /* max |A/V drift| in ms */
 static int s_pad_rc;                      /* last failed pad call rc */
 static int s_ctl_iv = -1;                 /* last control-stream IV length, -1 = none */
 /* the noted /launch or /resume (survives mldiag_reset until one reset consumes it) */
@@ -41,6 +44,7 @@ static int s_ln_keyok, s_ln_idok, s_ln_id;
 static unsigned char s_ln_key[16];
 static char s_launch[8] = "-", s_rikey[8] = "-", s_rikeyid[8] = "-";   /* per session result */
 #define INC(i) __atomic_fetch_add(&s_c[i], 1, __ATOMIC_RELAXED)
+#define GET_A(v) __atomic_load_n(&(v), __ATOMIC_RELAXED)
 #define GET(i) __atomic_load_n(&s_c[i], __ATOMIC_RELAXED)
 
 static long long now_ms(void) {
@@ -81,7 +85,18 @@ void mldiag_pad(int arrival, int rc) {
   if (rc != 0) { INC(C_PADFAIL); __atomic_store_n(&s_pad_rc, rc, __ATOMIC_RELAXED); }
 }
 
-void mldiag_audio_mime(int mime) { __atomic_store_n(&s_amime, mime, __ATOMIC_RELAXED); }
+void mldiag_aout_open(int native) { pthread_mutex_lock(&s_mu); s_aout = 1; s_aout_native = native; pthread_mutex_unlock(&s_mu); }
+void mldiag_aout_none(int reason, int err) { pthread_mutex_lock(&s_mu); s_aout = 2; s_aout_reason = reason; s_aout_err = err; pthread_mutex_unlock(&s_mu); }
+void mldiag_aout_state(unsigned lat_us, int err, unsigned written_ms) {
+  __atomic_store_n(&s_aout_lat_us, lat_us, __ATOMIC_RELAXED);
+  __atomic_store_n(&s_aout_perr, (unsigned)err, __ATOMIC_RELAXED);
+  __atomic_store_n(&s_aout_written_ms, written_ms, __ATOMIC_RELAXED);
+}
+void mldiag_drift(int ms) {
+  int a = ms < 0 ? -ms : ms, m = __atomic_load_n(&s_drift_max, __ATOMIC_RELAXED);
+  while (a > m && !__atomic_compare_exchange_n(&s_drift_max, &m, a, 0, __ATOMIC_RELAXED, __ATOMIC_RELAXED)) {}
+}
+void mldiag_idr_retry(void) { INC(C_IDRRETRY); }
 
 void mldiag_adec(int ok, int err) {
   if (ok) { INC(C_ADEC); return; }
@@ -90,7 +105,8 @@ void mldiag_adec(int ok, int err) {
 
 void mldiag_reset(const mldiag_cfg *cfg) {
   pthread_mutex_lock(&s_mu);
-  memset(s_c, 0, sizeof s_c); s_ctl_iv = -1; s_pad_rc = 0; s_adec_err = 0; s_amime = -99;
+  memset(s_c, 0, sizeof s_c); s_ctl_iv = -1; s_pad_rc = 0; s_adec_err = 0;
+  s_aout = s_aout_native = s_aout_reason = s_aout_err = 0; s_aout_lat_us = s_aout_written_ms = s_aout_perr = 0; s_drift_max = 0;
   memset(s_first, 0, sizeof s_first); memset(s_last, 0, sizeof s_last);
   s_nlines = 0; s_out[0] = 0; s_code = 0;
   s_vset = 0; s_open = s_win = s_prep = s_pdone = s_start = s_state = -99; s_first_pkt_ms = -1; s_sub_last_bad = s_vfail_last = s_afail_last = 0;
@@ -221,15 +237,20 @@ void mldiag_fail(int code, int stage, const char *stage_name, int host_feature_f
   if (s_first_pkt_ms < 0) snprintf(fpS, sizeof fpS, "-"); else snprintf(fpS, sizeof fpS, "%d", s_first_pkt_ms);
   if (s_vset) ADD(" | video setup=0x%x %dx%d@%d rc=%d", s_vfmt, s_vw, s_vh, s_vfps, s_vrc);
   else ADD(" | video setup=none");
-  ADD(" du=%u idr=%u first_du_ms=%s first_pkt_ms=%s", GET(C_DU), GET(C_IDR), fduS, fpS);
-  ADD(" | player open=%d win=%d prep=%d pdone=%d start=%d state=%d vsub=%u asub=%u subfail=%u/%d vfail=%u/%d afail=%u/%d amime=%d adec=%u adec_fail=%u/%d err=%u/%u", s_open, s_win, s_prep, s_pdone, s_start, s_state,
+  ADD(" du=%u idr=%u first_du_ms=%s first_pkt_ms=%s idr_retry=%u", GET(C_DU), GET(C_IDR), fduS, fpS, GET(C_IDRRETRY));
+  ADD(" | player open=%d win=%d prep=%d pdone=%d start=%d state=%d vsub=%u asub=%u subfail=%u/%d vfail=%u/%d afail=%u/%d adec=%u adec_fail=%u/%d err=%u/%u", s_open, s_win, s_prep, s_pdone, s_start, s_state,
       GET(C_VSUB), GET(C_ASUB), GET(C_SUBFAIL), s_sub_last_bad, GET(C_VSUBFAIL), s_vfail_last, GET(C_ASUBFAIL), s_afail_last,
-      __atomic_load_n(&s_amime, __ATOMIC_RELAXED), GET(C_ADEC), GET(C_ADECFAIL), __atomic_load_n(&s_adec_err, __ATOMIC_RELAXED), player_errors, player_last_error);
+      GET(C_ADEC), GET(C_ADECFAIL), __atomic_load_n(&s_adec_err, __ATOMIC_RELAXED), player_errors, player_last_error);
   char tS[4][24], pS[2][24];   /* ms after prepare_async, "-" = not reached */
   const long long ev[4] = { s_t_pdone, s_t_err, s_t_v1, s_t_a1 }, pv[2] = { s_vpts1, s_apts1 };
   for (int i = 0; i < 4; i++) { if (ev[i] < 0 || s_t_prep < 0) snprintf(tS[i], sizeof tS[i], "-"); else snprintf(tS[i], sizeof tS[i], "%lld", ev[i] - s_t_prep); }
   for (int i = 0; i < 2; i++) { if (pv[i] < 0) snprintf(pS[i], sizeof pS[i], "-"); else snprintf(pS[i], sizeof pS[i], "%lld", pv[i]); }
   ADD(" | prep-t pdone=%s err=%s v1=%s a1=%s vpts1=%s apts1=%s", tS[0], tS[1], tS[2], tS[3], pS[0], pS[1]);
+  if (s_aout == 1)
+    ADD(" | aout pulse server=%s lat=%u err=%d written_ms=%u drift_max_ms=%d", s_aout_native ? "native" : "default",
+        GET_A(s_aout_lat_us), (int)GET_A(s_aout_perr), GET_A(s_aout_written_ms), GET_A(s_drift_max));
+  else
+    ADD(" | aout none reason=%s err=%d", s_aout_reason == 1 ? "dlopen" : s_aout_reason == 2 ? "dlsym" : s_aout_reason == 3 ? "new" : "-", s_aout_err);
   char ivS[16];
   int civ = __atomic_load_n(&s_ctl_iv, __ATOMIC_RELAXED);
   if (civ < 0) snprintf(ivS, sizeof ivS, "-"); else snprintf(ivS, sizeof ivS, "%d", civ);

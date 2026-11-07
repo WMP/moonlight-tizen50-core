@@ -29,9 +29,15 @@ void mldiag_note_launch(const char *url);
 unsigned mldiag_ctl_encrypt(int ok, int ivlen, int verify);   /* returns this session's message number (1, 2, ...) */
 /* One pad call (UI gamepad input): arrival != 0 = arrival else state; rc != 0 = failure (counted, last rc kept). */
 void mldiag_pad(int arrival, int rc);
-/* Audio: the mime of the stream info (-99 until set); one libopus decode: ok != 0 = decoded packet, else a failure (err = opus code, last kept). */
-void mldiag_audio_mime(int mime);
+/* Audio: one libopus decode: ok != 0 = decoded packet, else a failure (err = opus code, last kept). */
 void mldiag_adec(int ok, int err);
+/* Audio output (audio_pulse.c): PulseAudio is open (native = the "unix:/run/pulse/native" retry worked) or not available
+   (reason 1 dlopen, 2 dlsym, 3 pa_simple_new with err = its PA error). _state is called about once per second. */
+void mldiag_aout_open(int native);
+void mldiag_aout_none(int reason, int err);
+void mldiag_aout_state(unsigned lat_us, int err, unsigned written_ms);
+void mldiag_drift(int ms);            /* one A/V drift sample (ms, signed): the max |value| is kept */
+void mldiag_idr_retry(void);          /* one IDR request retry at the start (no video packet yet) */
 /* Build, store and print the line. extra values come from the caller; enc_* are the
    negotiated encryption features (supported by the host / requested by it / enabled). */
 void mldiag_fail(int code, int stage, const char *stage_name, int host_feature_flags,

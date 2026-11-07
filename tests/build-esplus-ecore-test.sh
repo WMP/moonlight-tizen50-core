@@ -33,6 +33,10 @@ for D in "" "-DMLT_TRACE"; do
   gcc -std=gnu11 -Wall -Wextra -Werror $D '-D_Static_assert(a,b)=' -I"$R" -I"$R/mlclient" -I"$LC" -I"$OPUS/include" \
     -o "$OUT-audio" "$HERE/audio_opus_test.c" "$R/mlclient/audio_opus.c" "$R/mlclient/mldiag.c" "$OPUSD/libopus_host.a" -lpthread -ldl -lm
   "$OUT-audio" 2>/dev/null
+  # PulseAudio writer: dlopen/dlsym wrapped, no libpulse
+  gcc -std=gnu11 -Wall -Wextra -Werror $D -I"$R/mlclient" -Wl,--wrap=dlopen,--wrap=dlsym \
+    -o "$OUT-pulse" "$HERE/audio_pulse_test.c" "$R/mlclient/audio_pulse.c" "$R/mlclient/mldiag.c" -lpthread -ldl
+  "$OUT-pulse" 2>/dev/null
 done
 # mldiag self-test
 gcc -std=gnu11 -Wall -Wextra -Werror -I"$R/mlclient" -o "$OUT-diag" "$HERE/mldiag_test.c" "$R/mlclient/mldiag.c" -lpthread
