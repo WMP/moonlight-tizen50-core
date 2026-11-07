@@ -452,7 +452,53 @@ namespace MoonlightHost
         private static bool Send(Tizen.Applications.Bundle msg, string app, string port, bool quiet = false)
         {
             try { s_port.Send(msg, app, port); return true; }
-            catch (Exception ex) { if (!quiet) Log.Error("send failed: " + ex.Message); return false; }
+            catch (Exception ex)
+            {
+                if (!quiet) Log.Error("send failed: " + ex.Message);
+                else QuietFailed(ex);
+                return false;
+            }
+        }
+
+        // Quiet (audio) failures: the first one in full, then one line per 10 s with the running count.
+        private static long s_quietFails;
+        private static int s_quietLogT;   // Environment.TickCount of the last line
+        private static void QuietFailed(Exception ex)
+        {
+            long n = Interlocked.Increment(ref s_quietFails);
+            if (n == 1) { s_quietLogT = Environment.TickCount; Log.Error("quiet send failed (first): " + ex); return; }
+            int now = Environment.TickCount;
+            if (unchecked(now - s_quietLogT) >= 10000) { s_quietLogT = now; Log.Error("quiet sends failed: " + n + " so far, last: " + ex.Message); }
+        }
+
+        // Audio event: one message when it fits, else only "data" travels as parts and every part
+        // also carries the scalar keys (fewer messages than SendReply, which sends each scalar as a part).
+        private static bool SendAudio(string id, int rate, int ch, int samples, byte[] data, int len, string app, string port)
+        {
+            var c = System.Globalization.CultureInfo.InvariantCulture;
+            string sr = rate.ToString(c), sc = ch.ToString(c), ss = samples.ToString(c);
+            int size = "event".Length + 7 + "rate".Length + sr.Length + "ch".Length + sc.Length + "samples".Length + ss.Length + "data".Length + len;
+            if (size <= MaxSingle)
+            {
+                var m = new Tizen.Applications.Bundle();
+                m.AddItem("id", id); m.AddItem("event", "mlaudio"); m.AddItem("rate", sr); m.AddItem("ch", sc); m.AddItem("samples", ss);
+                var d = new byte[len]; Array.Copy(data, d, len);
+                m.AddItem("data", d);
+                return Send(m, app, port, true);
+            }
+            var parts = AudioBatch.Split(data, len, ChunkBytes);
+            for (int seq = 0; seq < parts.Count; seq++)
+            {
+                var m = new Tizen.Applications.Bundle();
+                m.AddItem("id", id);
+                m.AddItem("seq", seq.ToString(c));
+                m.AddItem("total", parts.Count.ToString(c));
+                m.AddItem("field", "data");
+                m.AddItem("chunk", parts[seq]);
+                m.AddItem("event", "mlaudio"); m.AddItem("rate", sr); m.AddItem("ch", sc); m.AddItem("samples", ss);
+                if (!Send(m, app, port, true)) return false;
+            }
+            return true;
         }
 
         // A message port message is limited to ~4 KB, so a large message travels as
@@ -614,6 +660,11 @@ namespace MoonlightHost
                 m.AddItem("err", s.Errors.ToString(c));
                 m.AddItem("rec", s.Recoveries.ToString(c));
                 m.AddItem("play", s.PlayingMs.ToString(c));
+                long ain, asent, adrop; lock (s_aLock) { ain = s_aIn; asent = s_aSent; adrop = s_aDropped; }
+                m.AddItem("ain", ain.ToString(c));
+                m.AddItem("asent", asent.ToString(c));
+                m.AddItem("adrop", adrop.ToString(c));
+                m.AddItem("afail", Interlocked.Read(ref s_aFailed).ToString(c));
                 Send(m, s_uiApp, s_uiPort);
             }
             catch (Exception ex) { Log.Error("stats failed: " + ex.Message); }
@@ -624,7 +675,6 @@ namespace MoonlightHost
         // ---- Audio: engine callback -> bounded queue -> sender thread -> "mlaudio" events ----
         // The callback (engine audio thread) only copies and enqueues under a short lock.
         // Queue holds at most 500 ms; on overflow the oldest frame goes (live audio).
-        private sealed class AFrame { public int Rate, Ch, Samples; public byte[] Data; }
         private static readonly Engine.AudioCbDelegate s_audioCb = OnAudio;   // kept alive for native code
         private static readonly object s_aLock = new object();
         private static readonly Queue<AFrame> s_aQueue = new Queue<AFrame>();
@@ -634,7 +684,11 @@ namespace MoonlightHost
         private static bool s_aSkipLogged;
         private static readonly Stack<byte[]> s_aFree = new Stack<byte[]>();   // under s_aLock; exact-size frame buffers
         private const int AudioFreeMax = 16;
-        private static long s_aSent, s_aDropped, s_aFailed;   // drops/sent under s_aLock, failed on the sender thread
+        private static long s_aSent, s_aDropped, s_aFailed;   // drops/sent under s_aLock, failed on the sender thread (sent/failed count batches)
+        private static long s_aIn;                        // frames from the engine, under s_aLock
+        private static int s_aReports;                    // ReportDrops calls
+        private static readonly int s_envBatchMs = AudioBatch.ParseBatchMs(Environment.GetEnvironmentVariable("ML_AUDIO_BATCH_MS"));
+        private static int s_aBatchMs = s_envBatchMs;     // of the running stream
         private static System.Threading.Timer s_aTimer;   // under s_aLock
         private static bool s_aWarned;
         private const double AudioMaxMs = 500;
@@ -653,7 +707,8 @@ namespace MoonlightHost
                     while (s_aFree.Count > 0 && buf == null) { var t = s_aFree.Pop(); if (t.Length == len) buf = t; }   // other size: drop
                     if (buf == null) buf = new byte[len];
                     Marshal.Copy(pcm, buf, 0, len);   // S16LE on the little-endian TV
-                    var f = new AFrame { Rate = rate, Ch = channels, Samples = samples, Data = buf };
+                    var f = new AFrame { Rate = rate, Ch = channels, Samples = samples, T = Environment.TickCount, Data = buf };
+                    s_aIn++;
                     s_aQueue.Enqueue(f);
                     s_aQueuedMs += 1000.0 * samples / rate;
                     while (s_aQueuedMs > AudioMaxMs && s_aQueue.Count > 1)
@@ -669,7 +724,7 @@ namespace MoonlightHost
             catch { }
         }
 
-        private static void AudioStart()
+        private static void AudioStart(int batchMs)
         {
             if (Engine.SetAudioCb == null)
             {
@@ -680,14 +735,15 @@ namespace MoonlightHost
             lock (s_aLock)
             {
                 s_aQueue.Clear(); s_aQueuedMs = 0;
-                s_aSent = s_aDropped = s_aFailed = 0;
+                s_aSent = s_aDropped = s_aFailed = s_aIn = 0; s_aReports = 0;
+                s_aBatchMs = batchMs;
                 s_aFree.Clear();
                 s_aOn = true;
                 gen = ++s_aGen;
             }
             try { PushAudioStats(0, 0, 0); Engine.SetAudioCb(s_audioCb); }
             catch (Exception ex) { Log.Error("audio callback set failed: " + ex.Message); }
-            new Thread(() => AudioSender(gen)) { IsBackground = true, Name = "mlaudio" }.Start();
+            new Thread(() => AudioSender(gen, batchMs)) { IsBackground = true, Name = "mlaudio" }.Start();
             lock (s_aLock)   // AudioStop may run on another thread (Poll) at the same time
             {
                 s_aTimer?.Dispose();
@@ -708,62 +764,74 @@ namespace MoonlightHost
         {
             try
             {
-                long s, d; lock (s_aLock) { s = s_aSent; d = s_aDropped; }
-                PushAudioStats(s, d, Interlocked.Read(ref s_aFailed));
+                long s, d, i; int n; lock (s_aLock) { s = s_aSent; d = s_aDropped; i = s_aIn; n = ++s_aReports; }
+                long f = Interlocked.Read(ref s_aFailed);
+                PushAudioStats(s, d, f);
+                if (n % 5 == 0) Log.Info("audio: in=" + i + " sent=" + s + " dropped=" + d + " failed=" + f + " batchMs=" + s_aBatchMs);
             }
             catch (Exception ex) { Log.Error("audio drops report failed: " + ex.Message); }
         }
 
         private static void AudioStop()
         {
-            long sent, dropped, failed;
+            long sent, dropped, failed, input;
             lock (s_aLock)
             {
                 if (!s_aOn) return;   // not running (also: a second stop path)
                 s_aOn = false;
                 s_aGen++;
                 s_aQueue.Clear(); s_aQueuedMs = 0; s_aFree.Clear();
-                sent = s_aSent; dropped = s_aDropped; failed = Interlocked.Read(ref s_aFailed);
+                input = s_aIn; sent = s_aSent; dropped = s_aDropped; failed = Interlocked.Read(ref s_aFailed);
                 Monitor.PulseAll(s_aLock);
                 s_aTimer?.Dispose(); s_aTimer = null;   // Dispose does not wait for a running ReportDrops
             }
             try { PushAudioStats(sent, dropped, failed); }
             catch (Exception ex) { Log.Error("audio drops report failed: " + ex.Message); }
-            Log.Info("audio output stop: sent=" + sent + " dropped=" + dropped + " sendFailures=" + failed);
+            Log.Info("audio output stop: in=" + input + " sent=" + sent + " dropped=" + dropped + " sendFailures=" + failed);
         }
 
-        private static void AudioSender(int gen)
+        private static void AudioSender(int gen, int batchMs)
         {
-            var c = System.Globalization.CultureInfo.InvariantCulture;
-            long failedSeq = 0;
+            byte[] batch = new byte[4096];
+            int len = 0, samples = 0;
+            Action<AFrame> append = fr => { len = Append(ref batch, len, fr, ref samples); };
+            Func<int> now = () => Environment.TickCount;
+            Func<int, bool> wait = w => { Monitor.Wait(s_aLock, w); return gen == s_aGen; };
             while (true)
             {
-                AFrame f;
+                int rate, ch;
                 lock (s_aLock)
                 {
                     while (gen == s_aGen && s_aQueue.Count == 0) Monitor.Wait(s_aLock);
                     if (gen != s_aGen) return;
-                    f = s_aQueue.Dequeue();
-                    s_aQueuedMs -= 1000.0 * f.Samples / f.Rate;
+                    var f = s_aQueue.Dequeue();
+                    len = 0; samples = 0;
+                    rate = f.Rate; ch = f.Ch;
+                    append(f);
+                    if (!AudioBatch.Collect(s_aQueue, f, batchMs, append, now, wait)) return;
                 }
+                string id = "au" + Interlocked.Increment(ref s_eventSeq);
                 bool ok = false;
-                try
+                for (int attempt = 0; attempt < 2 && !ok && gen == s_aGen; attempt++)   // same id: the UI join ignores duplicate parts
                 {
-                    var r = new Dictionary<string, object>
-                    {
-                        { "event", "mlaudio" }, { "rate", f.Rate.ToString(c) }, { "ch", f.Ch.ToString(c) },
-                        { "samples", f.Samples.ToString(c) }, { "data", f.Data }
-                    };
-                    ok = SendReply("au" + Interlocked.Increment(ref s_eventSeq), r, s_uiApp, s_uiPort, true);
+                    try { ok = SendAudio(id, rate, ch, samples, batch, len, s_uiApp, s_uiPort); }
+                    catch { }
                 }
-                catch { }
-                lock (s_aLock)
-                {
-                    if (ok && gen == s_aGen) s_aSent++;
-                    if (gen == s_aGen && s_aFree.Count < AudioFreeMax) s_aFree.Push(f.Data);   // the send is done with the array
-                }
-                if (!ok) { Interlocked.Increment(ref s_aFailed); if (++failedSeq == 1) Log.Error("audio send failed (further failures only counted)"); }
+                lock (s_aLock) { if (ok && gen == s_aGen) s_aSent++; }
+                if (!ok) Interlocked.Increment(ref s_aFailed);
             }
+        }
+
+        // Under s_aLock: copies the frame into the batch buffer and recycles its array.
+        private static int Append(ref byte[] batch, int len, AFrame f, ref int samples)
+        {
+            s_aQueuedMs -= 1000.0 * f.Samples / f.Rate;
+            int fl = f.Data.Length;
+            if (len + fl > batch.Length) Array.Resize(ref batch, Math.Max(batch.Length * 2, len + fl));
+            Buffer.BlockCopy(f.Data, 0, batch, len, fl);
+            samples += f.Samples;
+            if (s_aFree.Count < AudioFreeMax) s_aFree.Push(f.Data);
+            return len + fl;
         }
 
         private static void SendEvent(string ev, string diag = null)
@@ -856,13 +924,15 @@ namespace MoonlightHost
                             return "bad args";
                         if (!int.TryParse(Item(b, "codecMode"), out codec)) codec = 0;   // optional: engine defaults to H.264
                         int fullRange = Item(b, "fullRange") == "true" ? 1 : 0;   // optional: absent = limited
+                        int abm;
+                        int batchMs = int.TryParse(Item(b, "audioBatchMs"), out abm) ? Math.Max(0, Math.Min(AudioBatch.MaxMs, abm)) : s_envBatchMs;   // optional
                         lock (s_engineLock)
                         {
                             if (s_active && Engine.Running() != 0)   // already streaming: keep the audio path as it is
                             {
                                 if (!s_aSkipLogged) { s_aSkipLogged = true; Log.Info("audio output start skipped: a stream is running"); }
                             }
-                            else AudioStart();
+                            else AudioStart(batchMs);
                             if (Engine.StartSessionV2 != null)
                                 return Rc(Engine.StartSessionV2(Item(b, "host"), w, h, fps, br, Item(b, "rikey"), rikeyid,
                                                                 Item(b, "appVer"), Item(b, "gfeVer"), Item(b, "rtspUrl"),

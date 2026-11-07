@@ -47,6 +47,8 @@ The point of this repo is to improve the client itself:
   It also runs `tests/audio_opus_test.c` (Opus decode to PCM, the host audio callback); run it after touching `mlclient/audio_opus.c`.
 - UI bridge self-test (needs only node): `node tests/mlbridge_test.js`. Run it after touching
   `pkg/ui/mlbridge.js`.
+- Host audio batching self-test (.NET SDK, no Tizen): `dotnet run --project tests/host-audio`. Run it after touching
+  `pkg/dotnet-host/AudioBatch.cs`.
 - `BUILD_VARIANT=debug|release` (default `release`) is honoured by
   `mlclient/build-engine-so.sh`, `pkg/build-tpk.sh` and `pkg/build-package.sh`. The
   trace macro is `MLT_TRACE` in `mlclient/mltrace.h`; it must compile to nothing in
