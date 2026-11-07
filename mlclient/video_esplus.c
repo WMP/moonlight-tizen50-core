@@ -25,6 +25,7 @@ extern int esplus_set_window(int w, int h);
 extern void esplus_prepare(void);
 extern int esplus_add_video_info(const esplusplayer_video_stream_info *vi);
 extern int esplus_submit(const esplusplayer_es_packet *pkt);
+extern int esplus_submit_ep(const esplusplayer_es_packet *pkt, unsigned epoch);   /* NOT_PREPARED if the epoch is stale */
 extern void esplus_close(void);
 
 #define VLOG(...) fprintf(stderr, "[video] " __VA_ARGS__)
@@ -86,6 +87,7 @@ static int VidDecSetup(int videoFormat, int width, int height, int redrawRate, v
 
 static int VidDecSubmit(PDECODE_UNIT du) {
   mldiag_video_du(du->frameType == FRAME_TYPE_IDR);
+  unsigned epoch = esplus_epoch();   /* BEFORE the flags: a rebuild that arms the new player after this makes the submit stale */
   if (esplus_take_rebase()) {   /* fresh player after a rebuild: its timeline starts at 0 again, like the first start */
     s_have_base = 0; s_have_prev = 0; s_have_arrival = 0;
     MLT("video: PTS rebase after a player rebuild");
@@ -121,9 +123,9 @@ static int VidDecSubmit(PDECODE_UNIT du) {
   s_prev_pts_ms = pts_ms; s_have_prev = 1;
   esplusplayer_es_packet pkt = {ESPLUSPLAYER_STREAM_TYPE_VIDEO, (char *)s_scratch, (uint32_t)off,
                                 (uint64_t)pts_ms * 1000000ull, (1000000000ull / s_fps)};
-  int r = esplus_submit(&pkt);
+  int r = esplus_submit_ep(&pkt, epoch);
   /* FULL backpressure: the player queue is full; retry briefly, then drop the frame (DR_NEED_IDR) */
-  for (int i = 0; r == ESPLUSPLAYER_SUBMIT_STATUS_FULL && i < 3; i++) { usleep(2000); r = esplus_submit(&pkt); }
+  for (int i = 0; r == ESPLUSPLAYER_SUBMIT_STATUS_FULL && i < 3; i++) { usleep(2000); r = esplus_submit_ep(&pkt, epoch); }
   if (r == ESPLUSPLAYER_SUBMIT_STATUS_FULL) {
     __atomic_fetch_add(&esplus_stats.dropped_full, 1, __ATOMIC_RELAXED);
     return DR_NEED_IDR;

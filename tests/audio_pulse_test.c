@@ -10,10 +10,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include "audio_pulse.h"
-#include "esplus_stats.h"
 #include "mldiag.h"
 
-esplus_stats_t esplus_stats;
 
 typedef struct { int format; uint32_t rate; uint8_t channels; } ss_t;
 typedef struct { uint32_t maxlength, tlength, prebuf, minreq, fragsize; } attr_t;
@@ -76,17 +74,17 @@ int main(void) {
   assert(last_attr.tlength == 7680 && last_attr.prebuf == 0);
   assert(last_attr.maxlength == (uint32_t)-1 && last_attr.minreq == (uint32_t)-1 && last_attr.fragsize == (uint32_t)-1);
   assert(new_calls == 1 && servers[0] == NULL);
-  assert(strstr(diag(), " | aout pulse server=default lat=0 err=0 written_ms=0 drift_max_ms=0 | "));
+  assert(strstr(diag(), " | aout pulse server=default lat=0 err=0 written_ms=0 | "));
 
   /* write: 960 bytes = 240 samples = 5 ms; the first write queries the latency; written_ms counts per sample */
   assert(audio_pulse_write(pcm, sizeof pcm) == 0);
-  assert(write_calls == 1 && wrote == 960 && latency_calls == 1 && esplus_stats.audio_written_ms == 5);
+  assert(write_calls == 1 && wrote == 960 && latency_calls == 1);
   for (int i = 0; i < 9; i++) assert(audio_pulse_write(pcm, sizeof pcm) == 0);
-  assert(esplus_stats.audio_written_ms == 50 && latency_calls == 1);
-  assert(strstr(diag(), " | aout pulse server=default lat=41000 err=0 written_ms=5 drift_max_ms=0 | "));   /* the diagnostics refresh with the latency query */
+  assert(latency_calls == 1);
+  assert(strstr(diag(), " | aout pulse server=default lat=41000 err=0 written_ms=5 | "));   /* the diagnostics refresh with the latency query */
   /* a failed write is reported, not counted */
   write_rc = 1; assert(audio_pulse_write(pcm, sizeof pcm) == -1); write_rc = 0;
-  assert(esplus_stats.audio_written_ms == 50 && strstr(diag(), "err=9 written_ms=50"));
+  assert(strstr(diag(), "err=9 written_ms=50"));
   audio_pulse_drain(); assert(drain_calls == 1);
   audio_pulse_close(); assert(free_calls == 1);
   audio_pulse_close(); audio_pulse_drain(); assert(free_calls == 1 && drain_calls == 1);   /* closed: no-ops */
@@ -96,7 +94,7 @@ int main(void) {
   new_calls = 0; new_fails = 1;
   assert(audio_pulse_open(48000, 2, 40) == 0);
   assert(new_calls == 2 && servers[0] == NULL && strcmp(servers[1], "unix:/run/pulse/native") == 0);
-  assert(esplus_stats.audio_written_ms == 0 && strstr(diag(), " | aout pulse server=native "));
+  assert(strstr(diag(), " | aout pulse server=native "));
   assert(audio_pulse_open(48000, 2, 0) == 0);   /* open twice: the old stream is closed; 0 = default tlength */
   assert(last_attr.tlength == (uint32_t)-1 && free_calls == 2);
   audio_pulse_close();

@@ -6,7 +6,7 @@
  * signal. The .NET host drives the same four ml_engine_* functions.
  */
 #ifndef _POSIX_C_SOURCE
-#define _POSIX_C_SOURCE 199309L
+#define _POSIX_C_SOURCE 200112L
 #endif
 #include <signal.h>
 #include <stdio.h>
@@ -35,6 +35,9 @@ int main(int argc, char **argv) {
   int bitrate= argc > 6 ? atoi(argv[6]) : 0;
   const char *pin = getenv("MOONLIGHT_PIN");
   const char *datadir = getenv("MOONLIGHT_DATADIR");
+
+  /* the CLI runs no ecore main loop: a rebuild's display step would never run */
+  setenv("MLENGINE_PLAYER_REBUILD_MAX", "0", 0);
 
   signal(SIGINT, on_sig);
   signal(SIGTERM, on_sig);

@@ -7,7 +7,6 @@
 #include <time.h>
 
 #include "audio_pulse.h"
-#include "esplus_stats.h"
 #include "mldiag.h"
 #include "mltrace.h"
 
@@ -63,14 +62,12 @@ static int load_lib(void) {
 
 static void publish(void) {
   uint32_t ms = (uint32_t)(s_samples * 1000 / (uint64_t)s_rate);
-  __atomic_store_n(&esplus_stats.audio_written_ms, ms, __ATOMIC_RELAXED);
   mldiag_aout_state((unsigned)s_lat_us, s_last_err, ms);
 }
 
 int audio_pulse_open(int rate, int channels, int latency_ms) {
   audio_pulse_close();
   s_last_err = 0; s_samples = 0; s_lat_t = 0; s_lat_us = 0;
-  __atomic_store_n(&esplus_stats.audio_written_ms, 0, __ATOMIC_RELAXED);
   if (rate <= 0 || channels <= 0 || channels > 255) { mldiag_aout_none(3, 0); return -1; }
   int why = load_lib();
   if (why) { mldiag_aout_none(why, 0); return -1; }
@@ -101,7 +98,6 @@ int audio_pulse_write(const void *pcm, size_t bytes) {
     return -1;
   }
   s_samples += bytes / ((size_t)s_channels * 2);
-  __atomic_store_n(&esplus_stats.audio_written_ms, (uint32_t)(s_samples * 1000 / (uint64_t)s_rate), __ATOMIC_RELAXED);
   uint64_t now = mono_ms();
   if (!s_lat_t || now - s_lat_t >= 1000) {   /* about once per second */
     s_lat_t = now;
