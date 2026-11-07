@@ -9,17 +9,29 @@ LC="$R/third_party/moonlight-tizen/moonlight-common-c/src"
 [ -f "$LC/Limelight.h" ] || { echo "Limelight.h missing: run 'git submodule update --init'" >&2; exit 1; }
 # libopus for the host (the engine decodes Opus to PCM; the test also uses the encoder). Third-party code: -w.
 OPUS="$R/third_party/moonlight-tizen/opus"
-OPUSD=$(dirname "$OUT")/esplus_opus_host
 . "$R/mlclient/opus-sources.sh"
+OUT=$(mkdir -p "$(dirname "$OUT")" && cd "$(dirname "$OUT")" && pwd)/$(basename "$OUT")   # absolute: never write into the working tree
+OPUSF=$(opus_cflags "$OPUS")
+# the cache dir is named by a hash of the source list, the flags and the file contents: a changed submodule or list gives a new dir
+OPUSH=$( { opus_sources "$OPUS"; echo "$OPUSF"; for f in $(opus_sources "$OPUS"); do cksum < "$OPUS/$f"; done; } | cksum | tr ' ' _)
+OPUSD=$(dirname "$OUT")/esplus_opus_host_$OPUSH
 if [ ! -f "$OPUSD/libopus_host.a" ]; then
-  mkdir -p "$OPUSD"
+  rm -rf "$OPUSD"; mkdir -p "$OPUSD/o"
+  objs=""
   for f in $(opus_sources "$OPUS"); do
-    gcc -std=gnu99 -w -O1 -DUSE_ALLOCA -DHAVE_LRINT -DHAVE_LRINTF -DFIXED_POINT -DOPUS_BUILD \
-      -I"$OPUS/include" -I"$OPUS/src" -I"$OPUS/silk" -I"$OPUS/celt" -I"$OPUS/silk/fixed" \
-      -c "$OPUS/$f" -o "$OPUSD/$(echo "$f" | tr / _ | sed 's/\.c$//').o"
+    o="$OPUSD/o/$(echo "$f" | tr / _ | sed 's/\.c$//').o"; objs="$objs $o"
+    gcc -w -O1 $OPUSF -c "$OPUS/$f" -o "$o"
   done
-  rm -f "$OPUSD/libopus_host.a.tmp"; ar rcs "$OPUSD/libopus_host.a.tmp" "$OPUSD"/*.o; mv "$OPUSD/libopus_host.a.tmp" "$OPUSD/libopus_host.a"
+  ar rcs "$OPUSD/libopus_host.a.tmp" $objs; mv "$OPUSD/libopus_host.a.tmp" "$OPUSD/libopus_host.a"
 fi
+# the decoder-only list (what the TV build archives) must link and decode: a missing decoder file fails here
+DECD="$OUT-opusdec"; rm -rf "$DECD"; mkdir -p "$DECD"; objs=""
+for f in $(opus_sources "$OPUS" dec); do
+  o="$DECD/$(echo "$f" | tr / _ | sed 's/\.c$//').o"; objs="$objs $o"; gcc -w -O1 $OPUSF -c "$OPUS/$f" -o "$o"
+done
+ar rcs "$DECD/libopus_dec.a" $objs
+gcc -std=gnu11 -Wall -Wextra -Werror -I"$OPUS/include" -o "$OUT-opusdec-test" "$HERE/opus_dec_link_test.c" "$DECD/libopus_dec.a" -lm
+"$OUT-opusdec-test"
 for D in "" "-DMLT_TRACE"; do
   gcc -std=gnu11 -Wall -Wextra -Werror $D '-D_Static_assert(a,b)=' -I"$R" -I"$R/mlclient" \
     -o "$OUT" "$HERE/esplus_ecore_test.c" "$R/mlclient/esplus_player.c" "$R/mlclient/mldiag.c" -lpthread -ldl

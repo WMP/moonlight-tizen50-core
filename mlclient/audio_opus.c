@@ -61,7 +61,7 @@ static int ar_init(int audioConfig, const POPUS_MULTISTREAM_CONFIGURATION cfg, v
     return -1;
   }
   s_pcm = malloc((size_t)s_samples_per_frame * (size_t)s_channels * sizeof *s_pcm);
-  if (!s_pcm) { ar_cleanup(); ALOG("out of memory\n"); return -1; }
+  if (!s_pcm) { ar_cleanup(); ALOG("out of memory\n"); mldiag_adec(0, OPUS_ALLOC_FAIL); return -1; }
 
   s_out = audio_pulse_open(cfg->sampleRate, cfg->channelCount, env_int("MLENGINE_AUDIO_LATENCY_MS", 40)) == 0;
   if (!s_out) { ALOG("audio output unavailable (pulse)\n"); MLT("audio output unavailable (pulse)"); }   /* the reason is in mldiag */
@@ -95,7 +95,8 @@ void AudEsplus_FillCallbacks(PAUDIO_RENDERER_CALLBACKS cb) {
   cb->stop = ar_stop;
   cb->cleanup = ar_cleanup;
   cb->decodeAndPlaySample = ar_decodePlay;
-  /* no CAPABILITY_DIRECT_SUBMIT: moonlight-common-c queues the packets and calls decodeAndPlaySample from its
-     own audio decoder thread, so libopus never runs on the receive thread */
+  /* No DIRECT_SUBMIT: pa_simple_write BLOCKS when the server buffer is full and must not run on common-c's network
+     receive thread; common-c's own audio thread calls us. A full common-c queue then drops up to 150 ms of audio;
+     there is no PTS (PulseAudio just plays on), so the effect is a short gap. */
   cb->capabilities = 0;
 }

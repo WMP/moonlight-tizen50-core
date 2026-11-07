@@ -16,7 +16,7 @@ OUT=${OUT:-./mlclient-build}; mkdir -p "$OUT"
 # the -I path has no spaces (unquoted compiler flags word-split on spaces).
 cp "$HERE/../esplusplayer_tv50.h" "$OUT/"
 FLAGS="--sysroot=$DEPS/sysroot -mcpu=cortex-a53 -mfpu=neon-vfpv4 -mfloat-abi=softfp -O2 -std=gnu11 -Wall -Wextra"
-INC="-I$C/src -I$OUT -I$MLT/libgamestream -I$BPD/ossl-inc -I$BPD/curl759/include"
+INC="-I$C/src -I$MLT/opus/include -I$OUT -I$MLT/libgamestream -I$BPD/ossl-inc -I$BPD/curl759/include"
 
 for src in cert_init main video_esplus audio_opus audio_pulse esplus_player gs_client input_evdev mldiag; do
   "$GCC" $FLAGS $INC -c "$HERE/$src.c" -o "$OUT/$src.o"
