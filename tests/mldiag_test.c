@@ -149,13 +149,13 @@ int main(void) {
   fail(-101); mldiag_last(buf, sizeof buf);
   assert(strstr(buf, " idr_retry=0 | player "));
   assert(strstr(buf, " | aout none reason=- err=0 | ctl "));
-  mldiag_aout_open(0); mldiag_aout_state(41000, 0, 1234); mldiag_idr_retry(); mldiag_idr_retry();
+  mldiag_aout_open(0); mldiag_aout_state(41000, 0, 1234, 0, 0); mldiag_idr_retry(); mldiag_idr_retry();
   fail(-101); mldiag_last(buf, sizeof buf);
   assert(strstr(buf, " idr_retry=2 | player "));
-  assert(strstr(buf, " | aout pulse server=default lat=41000 err=0 written_ms=1234 | ctl "));
-  mldiag_aout_open(1); mldiag_aout_state(5, -7, 9);
+  assert(strstr(buf, " | aout pulse server=default lat=41000 err=0 written_ms=1234 wfail=0 reopen=0 | ctl "));
+  mldiag_aout_open(1); mldiag_aout_state(5, -7, 9, 3, 2);
   fail(-101); mldiag_last(buf, sizeof buf);
-  assert(strstr(buf, " | aout pulse server=native lat=5 err=-7 written_ms=9 | ctl "));
+  assert(strstr(buf, " | aout pulse server=native lat=5 err=-7 written_ms=9 wfail=3 reopen=2 | ctl "));
   mldiag_aout_none(3, 11);
   fail(-101); mldiag_last(buf, sizeof buf);
   assert(strstr(buf, " | aout none reason=new err=11 | ctl "));

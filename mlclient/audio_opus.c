@@ -17,6 +17,7 @@
 
 #include "Limelight.h"
 #include "audio_pulse.h"
+#include "esplus_stats.h"
 #include "mldiag.h"
 #include "mltrace.h"
 
@@ -27,14 +28,6 @@ static OpusMSDecoder *s_dec;
 static opus_int16 *s_pcm;   /* one frame, reused: audio_pulse_write copies it into the server buffer */
 static int s_out;           /* 1 = PulseAudio is open */
 static unsigned s_nerr;
-
-static int env_int(const char *name, int def) {   /* same rule as the other knobs: a non-negative number */
-  const char *v = getenv(name);
-  char *end;
-  if (!v || !*v) return def;
-  long n = strtol(v, &end, 10);
-  return *end || n < 0 ? def : (int)n;
-}
 
 static void ar_cleanup(void) {
   audio_pulse_close();
@@ -63,14 +56,16 @@ static int ar_init(int audioConfig, const POPUS_MULTISTREAM_CONFIGURATION cfg, v
   s_pcm = malloc((size_t)s_samples_per_frame * (size_t)s_channels * sizeof *s_pcm);
   if (!s_pcm) { ar_cleanup(); ALOG("out of memory\n"); mldiag_adec(0, OPUS_ALLOC_FAIL); return -1; }
 
-  s_out = audio_pulse_open(cfg->sampleRate, cfg->channelCount, env_int("MLENGINE_AUDIO_LATENCY_MS", 40)) == 0;
+  s_out = audio_pulse_open(cfg->sampleRate, cfg->channelCount, mlc_env_int("MLENGINE_AUDIO_LATENCY_MS", 40)) == 0;
   if (!s_out) { ALOG("audio output unavailable (pulse)\n"); MLT("audio output unavailable (pulse)"); }   /* the reason is in mldiag */
   ALOG("init %d Hz, %d ch, %d samples/frame, PCM S16LE -> PulseAudio %s\n", cfg->sampleRate, cfg->channelCount, cfg->samplesPerFrame, s_out ? "ok" : "unavailable");
   return 0;
 }
 
 static void ar_start(void) {}
-static void ar_stop(void) { audio_pulse_drain(); }
+/* no drain: stop() can run while the audio thread is blocked in pa_simple_write (common-c stops the stream before it
+   joins that thread); the PulseAudio stream is freed in cleanup */
+static void ar_stop(void) {}
 
 static void ar_decodePlay(char *data, int len) {
   if (!s_dec || !s_pcm || !s_out) return;

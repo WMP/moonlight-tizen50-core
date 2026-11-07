@@ -177,15 +177,19 @@ menu/launcher.
 player minus `esplusplayer_get_playing_time`: how far ahead of the screen the
 player queue is. A sampler thread reads it every `MLENGINE_DEPTH_POLL_MS` (the
 counters and the sampler also run in release builds). `audio_depth_ms` is always 0: the
-player has no audio stream. The sampler logs the A/V drift instead (audio written to
-PulseAudio minus video playing time, relative to the first sample; over 250 ms it is traced,
-the maximum is in the `aout` section of the `ML-ERROR` line).
+player has no audio stream; there is no A/V sync (PulseAudio has its own clock).
+
 **Audio.** The esplusplayer carries video only. Platform limitation: the TV player rejects engine-fed
 audio streams (both Opus and raw PCM). The host sends Opus; the engine decodes it with libopus (fixed
 point, from the submodule; `build-deps-lib.sh` makes `libopus_tv.a`) and writes the PCM S16LE to
 PulseAudio with `libpulse-simple`, loaded at run time with `dlopen` (`audio_pulse.c`; no link-time
 dependency). If PulseAudio is not available, the stream goes on without sound. The PulseAudio buffer
-is set with `MLENGINE_AUDIO_LATENCY_MS` (default 40).
+is set with `MLENGINE_AUDIO_LATENCY_MS` (default 40). The channel map is explicit (mono, stereo, 5.1 and 7.1 in the
+Moonlight order FL FR C LFE RL RR SL SR). `pa_simple_write` blocks when the server buffer is full, so it runs on
+moonlight-common-c's own audio thread (not the receive thread): a full common-c queue drops up to 150 ms of audio, a
+short gap. After a failed write the engine closes the stream and reopens it on a later write, at most once per 2 s.
+The `ML-ERROR` line has `aout pulse server=<default|native> lat=<usec> err=<n> written_ms=<n> wfail=<n> reopen=<n>`
+(or `aout none reason=<dlopen|dlsym|new|->`).
 
 **Start retry.** If no video packet has reached the player 300 ms after prepare, the engine asks for an IDR frame again
 (every 500 ms, at most 10 times): the first request can be lost before the host pipeline is up.
@@ -222,9 +226,11 @@ the cached video stream info, then (on the ecore main loop, without waiting) dis
 sink drops frames until an IDR and restarts its PTS at 0. At most `MLENGINE_PLAYER_REBUILD_MAX` rebuilds per session (default 1, 0 = off). The
 watchdog timers restart with the rebuild, so a second failure ends the session as before. It needs the window and the
 cached stream info; the count is `rebuilds=` in the `ML-ERROR` line. The display step runs on the ecore main loop, so
-the rebuild completes only in the .NET host (which runs that loop). In the CLI harness the queued step never runs and
-the start watchdog then ends the session (`-110` with `rebuilds=1`); set `MLENGINE_PLAYER_REBUILD_MAX=0` there to keep
-the old behaviour.
+the rebuild completes only in the .NET host (which runs that loop). The CLI harness (`mlclient/main.c`) runs no such loop,
+so it sets `MLENGINE_PLAYER_REBUILD_MAX=0` unless you set a value. The slow player calls of a rebuild run on the sampler thread
+without the player lock; the video thread gets NOT_PREPARED meanwhile (a frame cut for the old player is refused by an epoch
+check). The result of each step is `rb=open/addv/disp/prep` in the `ML-ERROR` line (-99 = not reached). The "no playing time"
+rebuild never waits longer than `MLENGINE_FATAL_STALL_MS`.
 
 **Fatal watchdogs.** These end the session with an `ML-ERROR` line (the host reads
 it from `ml_engine_running()`) and record the raw player state (`state=`). The player

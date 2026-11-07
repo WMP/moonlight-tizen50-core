@@ -46,7 +46,7 @@ for D in "" "-DMLT_TRACE"; do
     -o "$OUT-audio" "$HERE/audio_opus_test.c" "$R/mlclient/audio_opus.c" "$R/mlclient/mldiag.c" "$OPUSD/libopus_host.a" -lpthread -ldl -lm
   "$OUT-audio" 2>/dev/null
   # PulseAudio writer: dlopen/dlsym wrapped, no libpulse
-  gcc -std=gnu11 -Wall -Wextra -Werror $D -I"$R/mlclient" -Wl,--wrap=dlopen,--wrap=dlsym \
+  gcc -std=gnu11 -Wall -Wextra -Werror $D -I"$R/mlclient" -Wl,--wrap=dlopen,--wrap=dlsym,--wrap=clock_gettime \
     -o "$OUT-pulse" "$HERE/audio_pulse_test.c" "$R/mlclient/audio_pulse.c" "$R/mlclient/mldiag.c" -lpthread -ldl
   "$OUT-pulse" 2>/dev/null
 done

@@ -16,11 +16,12 @@ void LiInitializeAudioCallbacks(PAUDIO_RENDERER_CALLBACKS c) { memset(c, 0, size
 void AudEsplus_FillCallbacks(PAUDIO_RENDERER_CALLBACKS cb);
 
 /* audio_pulse stub: records what audio_opus.c writes */
-static int n_open, n_close, n_drain, n_write, open_rc, open_rate, open_ch, open_lat;
+static int n_open, n_close, n_write, open_rc, open_rate, open_ch, open_lat;
 static size_t sizes[16];
 int audio_pulse_open(int rate, int channels, int latency_ms) { n_open++; open_rate = rate; open_ch = channels; open_lat = latency_ms; return open_rc; }
 int audio_pulse_write(const void *pcm, size_t bytes) { assert(pcm); if (n_write < 16) sizes[n_write] = bytes; n_write++; return 0; }
-void audio_pulse_drain(void) { n_drain++; }
+/* esplus_player.c's knob parser (not linked here) */
+int mlc_env_int(const char *name, int def) { const char *v = getenv(name); return v && *v ? atoi(v) : def; }
 void audio_pulse_close(void) { n_close++; }
 
 #define MS 1000000ull
@@ -74,7 +75,7 @@ int main(void) {
     mldiag_fail(-1, -1, NULL, 0, 0, 0, 0, 0, 0, 0, 0); mldiag_last(line, sizeof line);
     assert(strstr(line, " adec=6 adec_fail=1/-4 err="));   /* -4 = OPUS_INVALID_PACKET */
 
-    n_drain = 0; cb.stop(); assert(n_drain == 1);
+    n_close = 0; cb.stop(); assert(n_close == 0);   /* a no-op: no drain, the stream stays open for the audio thread */
     n_close = 0; cb.cleanup(); assert(n_close >= 1);
     cb.decodeAndPlaySample((char *)fr[0], fl[0]);   /* no decoder: ignored */
     assert(n_write == 6);

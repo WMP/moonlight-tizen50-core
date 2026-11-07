@@ -51,6 +51,8 @@ int esplus_take_rebase(void);
 /* Rebuild epoch (atomic read). The video sink reads it before esplus_take_*() and submits with esplus_submit_ep: a submit
  * with an older epoch is refused (NOT_PREPARED) so a frame cut for the old player never reaches the new one. */
 unsigned esplus_epoch(void);
+/* A knob from the environment: its value if it is a non-negative number, else def (esplus_player.c; audio_opus.c uses it too). */
+int mlc_env_int(const char *name, int def);
 /* CLOCK_MONOTONIC in ms (sampler, arrival-mode PTS). */
 uint64_t esplus_mono_ms(void);
 

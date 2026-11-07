@@ -55,7 +55,7 @@ esplus_stats_t esplus_stats;
 esplus_cfg_t esplus_cfg;
 static volatile int s_conflicted;   /* set by the resource-conflicted callback; cleared per session */
 
-static int mlc_env_int(const char *name, int def) {
+int mlc_env_int(const char *name, int def) {
   const char *v = getenv(name);
   char *end;
   if (!v || !*v) return def;

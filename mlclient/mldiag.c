@@ -34,7 +34,7 @@ static unsigned s_c[C_N];
 static int s_adec_err;                    /* last libopus error */
 /* audio output: 0 not reached, 1 PulseAudio open, 2 none */
 static int s_aout, s_aout_native, s_aout_reason, s_aout_err;   /* reason: 1 dlopen, 2 dlsym, 3 new; err = PA error of the failed pa_simple_new */
-static unsigned s_aout_lat_us, s_aout_written_ms, s_aout_perr;
+static unsigned s_aout_lat_us, s_aout_written_ms, s_aout_perr, s_aout_wfail, s_aout_reopen;
 static int s_rb_open = -99, s_rb_addv = -99, s_rb_disp = -99, s_rb_prep = -99;   /* player rebuild steps */
 static int s_pad_rc;                      /* last failed pad call rc */
 static int s_ctl_iv = -1;                 /* last control-stream IV length, -1 = none */
@@ -87,10 +87,12 @@ void mldiag_pad(int arrival, int rc) {
 
 void mldiag_aout_open(int native) { pthread_mutex_lock(&s_mu); s_aout = 1; s_aout_native = native; pthread_mutex_unlock(&s_mu); }
 void mldiag_aout_none(int reason, int err) { pthread_mutex_lock(&s_mu); s_aout = 2; s_aout_reason = reason; s_aout_err = err; pthread_mutex_unlock(&s_mu); }
-void mldiag_aout_state(unsigned lat_us, int err, unsigned written_ms) {
+void mldiag_aout_state(unsigned lat_us, int err, unsigned written_ms, unsigned wfail, unsigned reopen) {
   __atomic_store_n(&s_aout_lat_us, lat_us, __ATOMIC_RELAXED);
   __atomic_store_n(&s_aout_perr, (unsigned)err, __ATOMIC_RELAXED);
   __atomic_store_n(&s_aout_written_ms, written_ms, __ATOMIC_RELAXED);
+  __atomic_store_n(&s_aout_wfail, wfail, __ATOMIC_RELAXED);
+  __atomic_store_n(&s_aout_reopen, reopen, __ATOMIC_RELAXED);
 }
 void mldiag_idr_retry(void) { INC(C_IDRRETRY); }
 void mldiag_rebuild(void) { INC(C_REBUILD); }
@@ -103,7 +105,7 @@ void mldiag_adec(int ok, int err) {
 void mldiag_reset(const mldiag_cfg *cfg) {
   pthread_mutex_lock(&s_mu);
   memset(s_c, 0, sizeof s_c); s_ctl_iv = -1; s_pad_rc = 0; s_adec_err = 0;
-  s_aout = s_aout_native = s_aout_reason = s_aout_err = 0; s_aout_lat_us = s_aout_written_ms = s_aout_perr = 0;
+  s_aout = s_aout_native = s_aout_reason = s_aout_err = 0; s_aout_lat_us = s_aout_written_ms = s_aout_perr = s_aout_wfail = s_aout_reopen = 0;
   memset(s_first, 0, sizeof s_first); memset(s_last, 0, sizeof s_last);
   s_nlines = 0; s_out[0] = 0; s_code = 0;
   s_rb_open = s_rb_addv = s_rb_disp = s_rb_prep = -99;
@@ -247,8 +249,8 @@ void mldiag_fail(int code, int stage, const char *stage_name, int host_feature_f
   for (int i = 0; i < 2; i++) { if (pv[i] < 0) snprintf(pS[i], sizeof pS[i], "-"); else snprintf(pS[i], sizeof pS[i], "%lld", pv[i]); }
   ADD(" | prep-t pdone=%s err=%s v1=%s a1=%s vpts1=%s apts1=%s", tS[0], tS[1], tS[2], tS[3], pS[0], pS[1]);
   if (s_aout == 1)
-    ADD(" | aout pulse server=%s lat=%u err=%d written_ms=%u", s_aout_native ? "native" : "default",
-        GET_A(s_aout_lat_us), (int)GET_A(s_aout_perr), GET_A(s_aout_written_ms));
+    ADD(" | aout pulse server=%s lat=%u err=%d written_ms=%u wfail=%u reopen=%u", s_aout_native ? "native" : "default",
+        GET_A(s_aout_lat_us), (int)GET_A(s_aout_perr), GET_A(s_aout_written_ms), GET_A(s_aout_wfail), GET_A(s_aout_reopen));
   else
     ADD(" | aout none reason=%s err=%d", s_aout_reason == 1 ? "dlopen" : s_aout_reason == 2 ? "dlsym" : s_aout_reason == 3 ? "new" : "-", s_aout_err);
   char ivS[16];
