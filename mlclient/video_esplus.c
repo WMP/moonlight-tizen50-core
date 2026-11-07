@@ -23,6 +23,7 @@ extern esplusplayer_handle esplus_create_open(void);
 extern esplusplayer_handle esplus_handle(void);
 extern int esplus_set_window(int w, int h);
 extern void esplus_prepare(void);
+extern int esplus_add_video_info(const esplusplayer_video_stream_info *vi);
 extern int esplus_submit(const esplusplayer_es_packet *pkt);
 extern void esplus_close(void);
 
@@ -64,7 +65,7 @@ static int VidDecSetup_(int videoFormat, int width, int height, int redrawRate, 
   if (wrc != 0) { MLT("video setup -> -1 (window)"); return -1; }
   esplusplayer_video_stream_info vi = {NULL, 0, mime, (uint32_t)width, (uint32_t)height,
                                        (uint32_t)width, (uint32_t)height, (uint32_t)s_fps, 1};
-  int ok = esplusplayer_add_video_stream_info(esplus_handle(), &vi);
+  int ok = esplus_add_video_info(&vi);   /* also caches it for a player rebuild */
   MLT("esplusplayer_add_video_stream_info mime=%u -> %d", mime, ok);
   if (!ok) { VLOG("add_video_stream_info failed\n"); return -1; }
   VLOG("setup %dx%d@%d fmt=0x%x\n", width, height, s_fps, videoFormat);

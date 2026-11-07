@@ -37,6 +37,7 @@ void mldiag_aout_open(int native);
 void mldiag_aout_none(int reason, int err);
 void mldiag_aout_state(unsigned lat_us, int err, unsigned written_ms);
 void mldiag_drift(int ms);            /* one A/V drift sample (ms, signed): the max |value| is kept */
+void mldiag_rebuild(void);            /* one player rebuild (esplus_player.c) */
 void mldiag_idr_retry(void);          /* one IDR request retry at the start (no video packet yet) */
 /* Build, store and print the line. extra values come from the caller; enc_* are the
    negotiated encryption features (supported by the host / requested by it / enabled). */

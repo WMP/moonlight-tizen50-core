@@ -26,6 +26,7 @@ void ecore_wl2_window_alpha_set(void *x, unsigned char a) { (void)x;(void)a; }
 void ecore_wl2_window_free(void *x) { (void)x; }
 void ecore_wl2_display_flush(void *x) { (void)x; }
 void *ecore_main_loop_thread_safe_call_sync(void *(*cb)(void *), void *data) { return cb(data); }
+void ecore_main_loop_thread_safe_call_async(void (*cb)(void *), void *data) { (void)cb; (void)data; }
 static int pl;
 esplusplayer_handle esplusplayer_create(void) { return (esplusplayer_handle)&pl; }
 int esplusplayer_open(esplusplayer_handle h) { (void)h; return 1; }

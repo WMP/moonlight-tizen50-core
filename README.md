@@ -216,6 +216,13 @@ forces an IDR. At most `MLENGINE_RECOVER_MAX` recoveries per session, at least
 app took the player) is final: only `stop()` leaves it, so it never triggers a
 recovery. The recovery watchdog never ends the session itself.
 
+**Player rebuild.** When `start()` fails after prepare, or the playing time cannot be read for `MLENGINE_STALL_MS`
+while frames arrive, the engine rebuilds the player once before the fatal watchdogs act: stop, close, create, open,
+the cached video stream info, then (on the ecore main loop, without waiting) display and `prepare_async`. The video
+sink drops frames until an IDR. At most `MLENGINE_PLAYER_REBUILD_MAX` rebuilds per session (default 1, 0 = off). The
+watchdog timers restart with the rebuild, so a second failure ends the session as before. It needs the window and the
+cached stream info; the count is `rebuilds=` in the `ML-ERROR` line.
+
 **Fatal watchdogs.** These end the session with an `ML-ERROR` line (the host reads
 it from `ml_engine_running()`) and record the raw player state (`state=`). The player
 is prepared when the video sink starts, and is started once `prepare_async_done` arrives, also with ok=0 (#22). If `start()` never
@@ -240,6 +247,7 @@ is created (for example on the CLI harness command line; the .NET host sets none
 | `MLENGINE_RECOVER_BACK_MS` | `250` | seek target behind the last video PTS |
 | `MLENGINE_START_TIMEOUT_MS` | `5000` (0 = off) | fatal `-110`: no successful `start()` this long after the first video submit |
 | `MLENGINE_AUDIO_LATENCY_MS` | `40` | PulseAudio buffer (target length) in ms; `0` = server default |
+| `MLENGINE_PLAYER_REBUILD_MAX` | `1` (0 = off) | player rebuilds per session after a failed `start()` or an unreadable playing time |
 | `MLENGINE_FATAL_STALL_MS` | `10000` (0 = off) | fatal `-111`: playing time frozen this long while submitting |
 
 **Overlay.** `toggleStats` in the UI turns on a live overlay (`mlstats` events from

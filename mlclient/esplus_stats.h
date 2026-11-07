@@ -28,7 +28,7 @@ typedef struct {
 enum { ESPLUS_LAT_OFF, ESPLUS_LAT_NUDGE, ESPLUS_LAT_ARRIVAL };
 typedef struct { int latency_mode, target_depth_ms, nudge_max_ms_per_s, drop_after_ms,
                  depth_poll_ms, stall_ms, recover_max, recover_back_ms,
-                 start_timeout_ms, fatal_stall_ms; } esplus_cfg_t;   /* the last two: 0 = off */
+                 start_timeout_ms, fatal_stall_ms, rebuild_max; } esplus_cfg_t;   /* the last three: 0 = off */
 
 /* engine-local fatal codes (moonlight-common-c uses -100..-104) */
 #define ML_ERR_PLAYER_NOT_STARTED -110   /* no start() success, video submitted for start_timeout_ms */

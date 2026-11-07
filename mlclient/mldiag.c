@@ -29,7 +29,7 @@ static long long s_first_du_ms = -1;
 
 /* hot counters: __atomic */
 enum { C_UNREC, C_DROP, C_WAITIDR, C_BADLEN, C_DECRYPT, C_CORRUPT, C_UNKFT, C_IDRREQ, C_FEC, C_QOVF,
-       C_DROPLIM, C_DU, C_IDR, C_VSUB, C_ASUB, C_SUBFAIL, C_CTLENC, C_CTLFAIL, C_VOK, C_VFAIL, C_VNA, C_PADARR, C_PADST, C_PADFAIL, C_VSUBFAIL, C_ASUBFAIL, C_ADEC, C_ADECFAIL, C_IDRRETRY, C_N };
+       C_DROPLIM, C_DU, C_IDR, C_VSUB, C_ASUB, C_SUBFAIL, C_CTLENC, C_CTLFAIL, C_VOK, C_VFAIL, C_VNA, C_PADARR, C_PADST, C_PADFAIL, C_VSUBFAIL, C_ASUBFAIL, C_ADEC, C_ADECFAIL, C_IDRRETRY, C_REBUILD, C_N };
 static unsigned s_c[C_N];
 static int s_adec_err;                    /* last libopus error */
 /* audio output: 0 not reached, 1 PulseAudio open, 2 none */
@@ -97,6 +97,7 @@ void mldiag_drift(int ms) {
   while (a > m && !__atomic_compare_exchange_n(&s_drift_max, &m, a, 0, __ATOMIC_RELAXED, __ATOMIC_RELAXED)) {}
 }
 void mldiag_idr_retry(void) { INC(C_IDRRETRY); }
+void mldiag_rebuild(void) { INC(C_REBUILD); }
 
 void mldiag_adec(int ok, int err) {
   if (ok) { INC(C_ADEC); return; }
@@ -238,7 +239,7 @@ void mldiag_fail(int code, int stage, const char *stage_name, int host_feature_f
   if (s_vset) ADD(" | video setup=0x%x %dx%d@%d rc=%d", s_vfmt, s_vw, s_vh, s_vfps, s_vrc);
   else ADD(" | video setup=none");
   ADD(" du=%u idr=%u first_du_ms=%s first_pkt_ms=%s idr_retry=%u", GET(C_DU), GET(C_IDR), fduS, fpS, GET(C_IDRRETRY));
-  ADD(" | player open=%d win=%d prep=%d pdone=%d start=%d state=%d vsub=%u asub=%u subfail=%u/%d vfail=%u/%d afail=%u/%d adec=%u adec_fail=%u/%d err=%u/%u", s_open, s_win, s_prep, s_pdone, s_start, s_state,
+  ADD(" | player open=%d win=%d prep=%d pdone=%d start=%d state=%d rebuilds=%u vsub=%u asub=%u subfail=%u/%d vfail=%u/%d afail=%u/%d adec=%u adec_fail=%u/%d err=%u/%u", s_open, s_win, s_prep, s_pdone, s_start, s_state, GET(C_REBUILD),
       GET(C_VSUB), GET(C_ASUB), GET(C_SUBFAIL), s_sub_last_bad, GET(C_VSUBFAIL), s_vfail_last, GET(C_ASUBFAIL), s_afail_last,
       GET(C_ADEC), GET(C_ADECFAIL), __atomic_load_n(&s_adec_err, __ATOMIC_RELAXED), player_errors, player_last_error);
   char tS[4][24], pS[2][24];   /* ms after prepare_async, "-" = not reached */
