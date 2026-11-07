@@ -93,6 +93,9 @@ static uint32_t s_fps_sub0;
    moonlight-common-c drops the frames that reference the flushed ones and asks for an IDR */
 static volatile int s_need_idr;
 int esplus_take_need_idr(void) { return __atomic_exchange_n(&s_need_idr, 0, __ATOMIC_RELAXED); }
+/* set after a player rebuild: the video sink restarts its PTS at 0 for the fresh player */
+static volatile int s_rebase;
+int esplus_take_rebase(void) { return __atomic_exchange_n(&s_rebase, 0, __ATOMIC_RELAXED); }
 
 static int64_t s_corr_us;            /* nudge correction, microseconds, under s_lock */
 static volatile int32_t s_corr_ms;   /* rounded, read lock-free by the video sink */
@@ -210,6 +213,9 @@ static int recover(const char *why, uint64_t now_ms) {
 
 /* Rebuild the player (the new one is created, opened and given the video stream here, under s_lock; its display,
    prepare_async and the IDR request run later on the main loop: rebuild_display_main). */
+/* a short get_playing_time failure on a healthy player must not rebuild it */
+#define REBUILD_NOTIME_MS 2000
+
 static int rebuild_allowed(void) {
   return s_rebuilds < esplus_cfg.rebuild_max && s_win && s_pl && s_have_vinfo && !s_conflicted && !s_fatal_set;
 }
@@ -255,6 +261,7 @@ static void rebuild_display_main(void *data) {
   mldiag_player("prep", ok);
   MLT("rebuild: prepare_async -> %d", ok);
   s_need_idr = 1;   /* after prepare_async: an IDR submitted before it would be refused (NOT_PREPARED) */
+  s_rebase = 1;
   pthread_mutex_unlock(&s_lock);
 }
 
@@ -292,7 +299,8 @@ void esplus_sample_tick(uint64_t now_ms) {
       }
     } else {   /* the time cannot be read: count it as frozen (#22) */
       if (!s_stall_t) { s_stall_t = now_ms; s_stall_vtries = s_vtries; }
-      else if (rebuild_allowed() && s_vtries != s_stall_vtries && now_ms - s_stall_t > (uint64_t)esplus_cfg.stall_ms)
+      else if (rebuild_allowed() && s_vtries != s_stall_vtries
+               && now_ms - s_stall_t > (uint64_t)(esplus_cfg.stall_ms > REBUILD_NOTIME_MS ? esplus_cfg.stall_ms : REBUILD_NOTIME_MS))
         rebuild_player("no playing time");   /* the fatal check waits: the rebuild resets its timer */
       else if (esplus_cfg.fatal_stall_ms && s_vtries != s_stall_vtries
                && now_ms - s_stall_t > (uint64_t)esplus_cfg.fatal_stall_ms)
@@ -399,7 +407,7 @@ esplusplayer_handle esplus_create_open(void) {
   if (!s_pl) {
     load_cfg();
     memset((void *)&esplus_stats, 0, sizeof esplus_stats);   /* new session */
-    s_conflicted = 0; s_error_pending = 0; s_need_idr = 0;
+    s_conflicted = 0; s_error_pending = 0; s_need_idr = 0; s_rebase = 0;
     s_stall_play = s_stall_t = s_last_recover_ms = 0; s_stall_sub = 0;
     s_stall_armed = s_recover_count = s_have_recover = s_off_logged = 0;
     s_prepare_called = 0; s_start_tried = 0; s_rebuilds = 0; s_have_vinfo = 0; s_drift_have = 0; s_drift_t = 0; s_drift_sign = 0; s_drift_log_t = 0; s_idr_t0 = s_idr_last = 0; s_idr_n = 0; s_vtries = s_stall_vtries = 0; s_start_t0 = 0; s_fatal_set = 0;

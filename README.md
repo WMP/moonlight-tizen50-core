@@ -216,12 +216,15 @@ forces an IDR. At most `MLENGINE_RECOVER_MAX` recoveries per session, at least
 app took the player) is final: only `stop()` leaves it, so it never triggers a
 recovery. The recovery watchdog never ends the session itself.
 
-**Player rebuild.** When `start()` fails after prepare, or the playing time cannot be read for `MLENGINE_STALL_MS`
-while frames arrive, the engine rebuilds the player once before the fatal watchdogs act: stop, close, create, open,
+**Player rebuild.** When `start()` fails after prepare, or the playing time cannot be read for 2 s (or `MLENGINE_STALL_MS`,
+if larger) while frames arrive, the engine rebuilds the player once before the fatal watchdogs act: stop, close, create, open,
 the cached video stream info, then (on the ecore main loop, without waiting) display and `prepare_async`. The video
-sink drops frames until an IDR. At most `MLENGINE_PLAYER_REBUILD_MAX` rebuilds per session (default 1, 0 = off). The
+sink drops frames until an IDR and restarts its PTS at 0. At most `MLENGINE_PLAYER_REBUILD_MAX` rebuilds per session (default 1, 0 = off). The
 watchdog timers restart with the rebuild, so a second failure ends the session as before. It needs the window and the
-cached stream info; the count is `rebuilds=` in the `ML-ERROR` line.
+cached stream info; the count is `rebuilds=` in the `ML-ERROR` line. The display step runs on the ecore main loop, so
+the rebuild completes only in the .NET host (which runs that loop). In the CLI harness the queued step never runs and
+the start watchdog then ends the session (`-110` with `rebuilds=1`); set `MLENGINE_PLAYER_REBUILD_MAX=0` there to keep
+the old behaviour.
 
 **Fatal watchdogs.** These end the session with an `ML-ERROR` line (the host reads
 it from `ml_engine_running()`) and record the raw player state (`state=`). The player

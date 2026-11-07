@@ -86,6 +86,10 @@ static int VidDecSetup(int videoFormat, int width, int height, int redrawRate, v
 
 static int VidDecSubmit(PDECODE_UNIT du) {
   mldiag_video_du(du->frameType == FRAME_TYPE_IDR);
+  if (esplus_take_rebase()) {   /* fresh player after a rebuild: its timeline starts at 0 again, like the first start */
+    s_have_base = 0; s_have_prev = 0; s_have_arrival = 0;
+    MLT("video: PTS rebase after a player rebuild");
+  }
   if (esplus_take_need_idr() && du->frameType != FRAME_TYPE_IDR) return DR_NEED_IDR;   /* after a recovery seek */
   /* experimental, off by default: the sampler's depth only refreshes per tick, so skip at most
      one frame per tick, and never the IDR we asked for. */

@@ -289,12 +289,16 @@ int main(void) {
        then the fatal stall fires fatal_stall_ms after the rebuild */
     esplus_create_open(); assert(esplus_set_window(1280, 720) == 0); esplus_add_video_info(&vi);
     cb_prepared(1); esplus_prepare(); play_ok = 0; vsub(0); c0 = create_calls;
-    esplus_sample_tick(1000); vsub(16); esplus_sample_tick(1700); assert(create_calls == c0);
-    esplus_sample_tick(1701); assert(create_calls == c0 + 1);
-    run_async(); cb_prepared(1); vsub(32); esplus_sample_tick(1800);          /* started again, time still unreadable */
-    vsub(48); esplus_sample_tick(2600); assert(create_calls == c0 + 1);       /* no second rebuild */
-    vsub(64); esplus_sample_tick(11800); assert(esplus_stats.fatal == 0);
-    vsub(80); esplus_sample_tick(11801); assert(esplus_stats.fatal == ML_ERR_PLAYER_STALLED);
+    esplus_sample_tick(1000); vsub(16); esplus_sample_tick(1999); assert(create_calls == c0);   /* 999 ms: not stall_ms, not 2 s */
+    esplus_sample_tick(2999); assert(create_calls == c0);                    /* 1999 ms past s_stall_t */
+    esplus_sample_tick(3000); assert(create_calls == c0);                    /* 2000 ms: not yet (more than 2 s) */
+    esplus_sample_tick(3001); assert(create_calls == c0 + 1);
+    assert(esplus_take_rebase() == 0);                                       /* set only after the display step */
+    run_async(); assert(esplus_take_rebase() == 1 && esplus_take_rebase() == 0);
+    cb_prepared(1); vsub(32); esplus_sample_tick(3800);          /* started again, time still unreadable */
+    vsub(48); esplus_sample_tick(9000); assert(create_calls == c0 + 1);       /* no second rebuild */
+    vsub(64); esplus_sample_tick(13800); assert(esplus_stats.fatal == 0);
+    vsub(80); esplus_sample_tick(13801); assert(esplus_stats.fatal == ML_ERR_PLAYER_STALLED);
     esplus_close(); play_ok = 1;
     /* MLENGINE_PLAYER_REBUILD_MAX=0: no rebuild */
     setenv("MLENGINE_PLAYER_REBUILD_MAX", "0", 1);

@@ -47,6 +47,8 @@ int32_t esplus_correction_ms(void);
 uint32_t esplus_sample_seq(void);
 /* 1 once after a recovery seek (then 0): the video sink must return DR_NEED_IDR. */
 int esplus_take_need_idr(void);
+/* 1 once after a player rebuild (then 0): the video sink restarts its PTS at 0. */
+int esplus_take_rebase(void);
 /* CLOCK_MONOTONIC in ms (sampler, arrival-mode PTS). */
 uint64_t esplus_mono_ms(void);
 

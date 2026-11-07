@@ -26,7 +26,9 @@ void ecore_wl2_window_alpha_set(void *x, unsigned char a) { (void)x;(void)a; }
 void ecore_wl2_window_free(void *x) { (void)x; }
 void ecore_wl2_display_flush(void *x) { (void)x; }
 void *ecore_main_loop_thread_safe_call_sync(void *(*cb)(void *), void *data) { return cb(data); }
-void ecore_main_loop_thread_safe_call_async(void (*cb)(void *), void *data) { (void)cb; (void)data; }
+static void (*async_cb)(void *); static void *async_data;   /* queued; run_async() plays the main loop */
+void ecore_main_loop_thread_safe_call_async(void (*cb)(void *), void *data) { async_cb = cb; async_data = data; }
+static void run_async(void) { void (*c)(void *) = async_cb; async_cb = NULL; if (c) c(async_data); }
 static int pl;
 esplusplayer_handle esplusplayer_create(void) { return (esplusplayer_handle)&pl; }
 int esplusplayer_open(esplusplayer_handle h) { (void)h; return 1; }
@@ -42,7 +44,8 @@ void esplusplayer_set_resource_conflicted_cb(esplusplayer_handle h, esplusplayer
 void esplusplayer_set_ready_to_prepare_cb(esplusplayer_handle h, esplusplayer_ready_to_prepare_cb c) { (void)h;(void)c; }
 void esplusplayer_set_prepare_async_done_cb(esplusplayer_handle h, esplusplayer_prepare_async_done_cb c) { (void)h; cb_prepared = c; }
 int esplusplayer_prepare_async(esplusplayer_handle h) { (void)h; return 1; }
-int esplusplayer_start(esplusplayer_handle h) { (void)h; return 1; }
+static int start_ret = 1;
+int esplusplayer_start(esplusplayer_handle h) { (void)h; return start_ret; }
 int esplusplayer_get_state(esplusplayer_handle h) { (void)h; return 2; }
 int esplusplayer_set_ecore_display(esplusplayer_handle h, esplusplayer_display_type t, void *win, int x, int y, int ww, int hh) { (void)h;(void)t;(void)win;(void)x;(void)y;(void)ww;(void)hh; return 1; }
 int esplusplayer_set_display_mode(esplusplayer_handle h, esplusplayer_display_mode m) { (void)h;(void)m; return 1; }
@@ -136,5 +139,17 @@ int main(void) {
   script_set(1, ESPLUSPLAYER_SUBMIT_STATUS_INVALID_PACKET);
   assert(frame(0, P) == DR_NEED_IDR && esplus_stats.submitted == 0);
   end();
+  /* 7: a player rebuild restarts the PTS at 0 (the first frame that reaches the PTS code, the IDR); without one nothing changes */
+  start_ret = 0; begin(NULL, NULL);
+  frame(1000, P); frame(1500, P);                  /* start() fails on the first submit */
+  assert(rec_ms[0] == 0 && rec_ms[1] == 500);
+  esplus_sample_tick(1000); run_async();           /* start failed -> rebuild; part 2 sets the IDR + rebase flags */
+  start_ret = 1; cb_prepared(1);
+  assert(frame(9000, P) == DR_NEED_IDR);           /* dropped until an IDR */
+  sub_calls = 0;
+  assert(frame(9100, FRAME_TYPE_IDR) == DR_OK && rec_ms[0] == 0);   /* fresh timeline: 0, not 8100 */
+  assert(frame(9116, P) == DR_OK && rec_ms[1] == 16);
+  assert(frame(9132, P) == DR_OK && rec_ms[2] == 32);               /* no second rebase */
+  end(); start_ret = 1;
   puts("video esplus ok"); return 0;
 }
