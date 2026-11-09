@@ -684,10 +684,48 @@
     if (px === undefined) return 'stats overlay font ' + (statsEl && parseInt(statsEl.style.fontSize, 10) || statsSizeStored()) + 'px';
     px = typeof px === 'number' && isFinite(px) ? Math.round(px) : NaN;
     if (!(px >= 8 && px <= 96)) return 'mlStatsSize: px must be 8..96';
-    try { localStorage.setItem(STATS_SIZE_KEY, String(px)); } catch (e) {}
-    if (statsEl) statsEl.style.fontSize = px + 'px';
+    setStatsSize(px);
     return 'stats overlay font ' + px + 'px (saved)';
   };
+
+  // Save and apply a size; also the label of the remote-control setting.
+  function setStatsSize(px) {
+    try { localStorage.setItem(STATS_SIZE_KEY, String(px)); } catch (e) {}
+    if (statsEl) statsEl.style.fontSize = px + 'px';
+    var b = document.getElementById('statsSizeBtn');
+    if (b) b.textContent = px + ' px';
+  }
+
+  // Settings > Advanced > "Statistics text size": Enter on the remote clicks the button and steps the size.
+  var STATS_SIZES = [16, 20, 24, 28, 32, 40, 48];
+  function addStatsSizeSetting() {
+    var menu = document.getElementById('performanceStatsMenu');
+    var row = menu && menu.parentNode;
+    if (!row || !row.parentNode || document.getElementById('statsSizeBtn')) return;
+    var opt = document.createElement('div');
+    opt.className = 'setting-option';
+    opt.innerHTML = '<label>Statistics text size</label><span class="mdl-list__item-text-body"></span>' +
+      '<div id="statsSizeMenu"><button type="button" id="statsSizeBtn" class="mdl-button mdl-js-button mdl-js-ripple-effect">' +
+      statsSizeStored() + ' px</button></div>';
+    row.parentNode.insertBefore(opt, row.nextSibling);
+    document.getElementById('statsSizeBtn').addEventListener('click', function () {
+      var cur = statsSizeStored(), next = STATS_SIZES[0];
+      for (var i = 0; i < STATS_SIZES.length; i++) if (STATS_SIZES[i] > cur) { next = STATS_SIZES[i]; break; }
+      setStatsSize(next);
+    });
+    var v = typeof Views !== 'undefined' && Views.AdvancedSettings && Views.AdvancedSettings.view;
+    if (v && typeof v.func === 'function') {
+      var old = v.func;
+      v.func = function () { return Array.prototype.slice.call(old.apply(this, arguments)).concat('statsSizeBtn'); };
+      console.log('[mlbridge] stats text size setting added, remote navigation hook added');
+    } else {
+      console.warn('[mlbridge] stats text size setting added, but Views.AdvancedSettings was not found: no remote navigation hook');
+    }
+  }
+  if (typeof document !== 'undefined' && document.addEventListener) {
+    if (document.readyState && document.readyState !== 'loading') addStatsSizeSetting();
+    else document.addEventListener('DOMContentLoaded', addStatsSizeSetting);
+  }
 
   // Diagnostics in this console (on a retail TV, Apps2Samsung's debug console is the
   // only place to read logs):

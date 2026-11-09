@@ -418,6 +418,75 @@ test('mlStatsSize: a new overlay uses the saved value; bad or throwing storage g
   assert.strictEqual(px(o.el), '24');
 });
 
+// Fake settings DOM + Views; mlbridge.js loaded in its own sandbox; all DOMContentLoaded listeners are kept.
+function settingsSandbox(ls, withDom, withViews) {
+  var lst, ids = {}, kids = [], listeners = [], els = [], logs = [];
+  var row = { parentNode: { insertBefore: function (n, ref) { kids.push(n); assert.strictEqual(ref, 'next'); } }, nextSibling: 'next' };
+  if (withDom) ids.performanceStatsMenu = { parentNode: row };
+  var w = { ML_TRACE: false };
+  var sb = { window: w, Promise: Promise, Uint8Array: Uint8Array, ArrayBuffer: ArrayBuffer, localStorage: ls,
+    tizen: { application: { getAppInfo: function () { return { id: 'x', version: '1', packageId: 'p' }; }, getAppsContext: function (ok) { ok([]); }, launch: function (i, ok) { ok(); } },
+      messageport: { requestLocalMessagePort: function () { return { addMessagePortListener: function (f) { lst = f; } }; },
+        requestRemoteMessagePort: function () { return { sendMessage: function (m) { lst([{ key: 'id', value: fields(m).id }]); } }; } } },
+    document: { readyState: 'loading', addEventListener: function (ev, f) { if (ev === 'DOMContentLoaded') listeners.push(f); },
+      body: { appendChild: function (e) { els.push(e); } },
+      createElement: function () {
+        var n = { style: {}, _h: {}, addEventListener: function (ev, f) { n._h[ev] = f; } };
+        Object.defineProperty(n, 'innerHTML', { set: function (h) { if (/id="statsSizeBtn"/.test(h)) ids.statsSizeBtn = { textContent: /([^>]*)<\/button>/.exec(h)[1], addEventListener: n.addEventListener, _h: n._h }; ids.statsSizeHtml = h; } });
+        return n;
+      },
+      getElementById: function (id) { return ids[id] || null; } },
+    console: { log: function (m) { logs.push(m); }, warn: function (m) { logs.push(m); }, error: function () {} },
+    setTimeout: function () { return 1; }, clearTimeout: function () {}, setInterval: function () { return 1; }, clearInterval: function () {},
+    navigator: { getGamepads: function () { return []; } } };
+  var list = ['unlockAllFpsBtn', 'optimizeBitrateBtn', 'disableWarningsBtn', 'performanceStatsBtn'];
+  if (withViews) sb.Views = { AdvancedSettings: { view: { func: function () { return list; } } } };
+  vm.runInNewContext(fs.readFileSync(__dirname + '/../pkg/ui/mlbridge.js', 'utf8'), sb);
+  return { lst: function (m) { lst(m); }, w: w, ids: ids, kids: kids, els: els, logs: logs, sb: sb, ready: function () { listeners.forEach(function (f) { try { f(); } catch (e) { if (!/common/.test(String(e))) throw e; } }); } };
+}
+function memLs(init) { return { _d: init || {}, getItem: function (k) { return this._d[k] === undefined ? null : this._d[k]; }, setItem: function (k, v) { this._d[k] = String(v); } }; }
+
+test('stats text size setting: button, remote list, cycling, console helper', async function () {
+  var ls = memLs(), t = settingsSandbox(ls, true, true);
+  t.ready(); t.ready();   // a second run must not insert again
+  assert.strictEqual(t.kids.length, 1);
+  assert.strictEqual(t.ids.statsSizeBtn.textContent, '24 px');
+  assert.strictEqual(JSON.stringify(t.sb.Views.AdvancedSettings.view.func()), JSON.stringify(['unlockAllFpsBtn', 'optimizeBitrateBtn', 'disableWarningsBtn', 'performanceStatsBtn', 'statsSizeBtn']));
+  assert.ok(t.logs.some(function (l) { return /remote navigation hook added/.test(l); }));
+  var click = t.ids.statsSizeBtn._h.click;
+  [28, 32, 40, 48, 16].forEach(function (v) {
+    click();
+    assert.strictEqual(t.ids.statsSizeBtn.textContent, v + ' px');
+    assert.strictEqual(ls.getItem('mlStatsSize'), String(v));
+  });
+  t.w.mlStatsSize(20);
+  assert.strictEqual(t.ids.statsSizeBtn.textContent, '20 px');
+});
+
+test('stats text size setting: applies to an existing overlay; stored 30 goes to 32', async function () {
+  var t = settingsSandbox(memLs({ mlStatsSize: '30' }), true, true);
+  t.ready();
+  assert.strictEqual(t.ids.statsSizeBtn.textContent, '30 px');
+  await t.w.SyncFunctions.toggleStats(); t.lst(STATS);
+  assert.strictEqual(px(t.els[0]), '30');
+  t.ids.statsSizeBtn._h.click();
+  assert.strictEqual(t.ids.statsSizeBtn.textContent, '32 px');
+  assert.strictEqual(t.els[0].style.fontSize, '32px');
+});
+
+test('stats text size setting: no settings DOM or no Views does not throw', async function () {
+  var t = settingsSandbox(memLs(), false, true);
+  t.ready();
+  assert.strictEqual(t.kids.length, 0);
+  assert.ok(/30px/.test(t.w.mlStatsSize(30)));
+  t = settingsSandbox(memLs(), true, false);
+  t.ready();
+  assert.strictEqual(t.kids.length, 1);
+  assert.ok(t.logs.some(function (l) { return /no remote navigation hook/.test(l); }));
+  assert.ok(/30px/.test(t.w.mlStatsSize(30)));
+  assert.strictEqual(t.ids.statsSizeBtn.textContent, '30 px');
+});
+
 test('toggleStats logs the osd field of the reply', async function () {
   async function press(rep) {
     var n = sent.length, p = win.SyncFunctions.toggleStats();

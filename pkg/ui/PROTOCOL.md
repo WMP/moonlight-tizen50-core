@@ -159,7 +159,7 @@ The host stops the polling and the UI hides the overlay on `streamTerminated`.
 The overlay also starts at stream start (`Connection Established`) when the UI's performance statistics
 setting is on (`startRequest` a[29]).
 `toggleStats` also asks the engine to lower its video window under the UI window (`osd`, `osdWin` in the reply), so the overlay shows over the picture.
-The overlay font is 24 px by default. The console helper `mlStatsSize(px)` (8 to 96) changes it and keeps it in the UI's local storage.
+The overlay font is 24 px by default. Settings > Advanced > "Statistics text size" steps it with the remote (16 to 48 px). The console helper `mlStatsSize(px)` (8 to 96) also changes it. The UI keeps it in its local storage.
 
 ## Timeouts (UI side)
 
