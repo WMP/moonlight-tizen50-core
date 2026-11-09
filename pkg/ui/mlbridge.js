@@ -672,6 +672,18 @@
     return 'stats over video ' + (on ? 'on' : 'off') + ' requested';
   };
 
+  // mlTargetDepth(ms): the latency target of the nudge pacing, 20..500 ms (clamped by the engine), kept for
+  // the life of the app; it also turns on nudge pacing. rc is the applied value, -1 = refused (negative).
+  window.mlTargetDepth = function (ms) {
+    bridgeCall('targetDepth', { ms: String(ms) }, DEFAULT_TIMEOUT).then(function (r) {
+      var msg = '[mlbridge] target depth ' + ms + ' -> rc ' + r.rc + (r.ms !== undefined ? ' ms ' + r.ms : '');
+      if (String(r.rc) !== '-1') console.log(msg); else console.warn(msg);
+    }, function (e) {
+      console.warn('[mlbridge] target depth failed:', e);
+    });
+    return 'target depth ' + ms + ' requested';
+  };
+
   // Diagnostics in this console (on a retail TV, Apps2Samsung's debug console is the
   // only place to read logs):
   //   mlDiag()          the host runs its engine load checks again and sends the report

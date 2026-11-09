@@ -371,6 +371,24 @@ test('mlStatsOsd sends statsOsd and logs the rc and the window', async function 
   assert.ok(warns.some(function (w) { return w.indexOf('[mlbridge] stats over video failed') === 0; }));
 });
 
+test('mlTargetDepth sends targetDepth and logs rc and ms', async function () {
+  sent.length = 0;
+  assert.ok(/30/.test(win.mlTargetDepth(30)));
+  var f = fields(sent[0]);
+  assert.strictEqual(f.cmd, 'targetDepth'); assert.strictEqual(f.ms, '30');
+  reply(f.id, { rc: '30', ms: '30' }); await tick();
+  assert.ok(logs.indexOf('[mlbridge] target depth 30 -> rc 30 ms 30') >= 0);
+  win.mlTargetDepth(-1);
+  reply(fields(sent[1]).id, { rc: '-1', ms: '30' }); await tick();
+  assert.ok(warns.some(function (w) { return w.indexOf('[mlbridge] target depth -1 -> rc -1 ms 30') === 0; }));
+  win.mlTargetDepth(40);
+  reply(fields(sent[2]).id, { rc: '40' }); await tick();   // an old host: no ms field
+  assert.ok(logs.indexOf('[mlbridge] target depth 40 -> rc 40') >= 0);
+  win.mlTargetDepth(50);
+  reply(fields(sent[3]).id, { error: 'not supported' }); await tick();
+  assert.ok(warns.some(function (w) { return w.indexOf('[mlbridge] target depth failed') === 0; }));
+});
+
 test('toggleStats logs the osd field of the reply', async function () {
   async function press(rep) {
     var n = sent.length, p = win.SyncFunctions.toggleStats();

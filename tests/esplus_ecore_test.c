@@ -84,6 +84,8 @@ extern void esplus_prepare(void);
 extern int esplus_add_video_info(const esplusplayer_video_stream_info *vi);
 extern int ml_engine_set_stats_osd(int on);
 extern int ml_engine_get_stats_osd(void);
+extern int ml_engine_set_target_depth_ms(int ms);
+extern int ml_engine_get_target_depth_ms(void);
 static int hook_ran, hook_ret, hook_sp;
 static void vsub(uint64_t pts_ms);
 void rebuild_hook_submit(void) {
@@ -107,6 +109,9 @@ int main(int argc, char **argv) {
   }
   /* the host app already holds one ecore reference */
   ecore_cnt = 1;
+  /* target depth default comes from the env while nothing is set (the setter is engine lifetime: this runs first) */
+  setenv("MLENGINE_TARGET_DEPTH_MS", "70", 1); assert(ml_engine_get_target_depth_ms() == 70);
+  unsetenv("MLENGINE_TARGET_DEPTH_MS"); assert(ml_engine_get_target_depth_ms() == 50);
   /* 1: close without any window (setup failed before set_window) must not shut down ecore */
   esplus_create_open(); esplus_close(); assert(ecore_cnt == 1 && wl2_cnt == 0);
   /* 2: success, then close */
@@ -425,5 +430,25 @@ int main(int argc, char **argv) {
     ml_engine_set_stats_osd(0);
   }
 #endif
+  /* t: runtime target depth. Last block: a set target cannot be unset and turns on nudge pacing for later sessions. */
+  { char line[4096];
+    setenv("MLENGINE_DEPTH_POLL_MS", "0", 1); setenv("MLENGINE_CATCHUP_MS", "0", 1); unsetenv("MLENGINE_LATENCY_MODE");
+    begin(); vsub(1000); play_ms = 100;                         /* depth 900, env mode off */
+    esplus_sample_tick(1000); esplus_sample_tick(2000);
+    assert(esplus_lat_mode() == ESPLUS_LAT_OFF && esplus_correction_ms() == 0);
+    assert(ml_engine_set_target_depth_ms(-1) == -1 && ml_engine_get_target_depth_ms() == 50);   /* refused, unchanged */
+    assert(ml_engine_set_target_depth_ms(5) == 20 && ml_engine_set_target_depth_ms(0) == 20);
+    assert(ml_engine_set_target_depth_ms(9999) == 500 && ml_engine_get_target_depth_ms() == 500);
+    assert(ml_engine_set_target_depth_ms(-1) == -1 && ml_engine_get_target_depth_ms() == 500);
+    assert(ml_engine_set_target_depth_ms(30) == 30 && ml_engine_get_target_depth_ms() == 30);   /* mid-stream */
+    assert(esplus_lat_mode() == ESPLUS_LAT_NUDGE);
+    esplus_sample_tick(3000); assert(esplus_correction_ms() == 10);   /* picked up at the next tick */
+    esplus_sample_tick(4000); assert(esplus_correction_ms() == 20);
+    mldiag_fail(-1, -1, NULL, 0, 0, 0, 0, 0, 0, 0, 0); mldiag_last(line, sizeof line); assert(strstr(line, " target=30"));
+    esplus_close(); assert(ml_engine_get_target_depth_ms() == 30);   /* survives the session end and start */
+    esplus_create_open(); assert(ml_engine_get_target_depth_ms() == 30 && esplus_lat_mode() == ESPLUS_LAT_NUDGE);
+    esplus_close(); assert(ecore_cnt == 1 && wl2_cnt == 0);
+    unsetenv("MLENGINE_CATCHUP_MS");
+  }
   puts("ecore balance ok"); return 0;
 }

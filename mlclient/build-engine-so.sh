@@ -62,7 +62,8 @@ for s in ml_engine_start ml_engine_running ml_engine_wait ml_engine_stop \
          ml_engine_gamepad_arrival ml_engine_gamepad_state \
          ml_engine_set_audio_cb ml_engine_set_audio_drops ml_engine_set_audio_host_stats \
          ml_engine_set_gamemode ml_engine_tv_game_mode ml_engine_get_audio_route ml_engine_get_audio_stats \
-         ml_engine_set_stats_osd ml_engine_get_stats_osd; do
+         ml_engine_set_stats_osd ml_engine_get_stats_osd \
+         ml_engine_set_target_depth_ms ml_engine_get_target_depth_ms; do
   "$OBJD" -T "$OUT/libmlengine.so" | grep -q " $s\$" || miss="$miss $s"
 done
 [ -z "$miss" ] && echo "ABI exported: ml_engine_* OK" || { echo "MISSING ABI:$miss"; exit 1; }

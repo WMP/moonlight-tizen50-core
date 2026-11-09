@@ -39,7 +39,9 @@ typedef struct { int latency_mode, target_depth_ms, nudge_max_ms_per_s, drop_aft
 #define ML_ERR_PLAYER_STALLED     -111   /* playing time frozen for fatal_stall_ms while submitting */
 
 extern esplus_stats_t esplus_stats;   /* counters: update with __atomic_fetch_add(..., __ATOMIC_RELAXED) */
-extern esplus_cfg_t esplus_cfg;       /* read once per session in esplus_create_open, read-only afterwards */
+extern esplus_cfg_t esplus_cfg;       /* read once per session in esplus_create_open, read-only afterwards; the runtime target override lives in esplus_player.c */
+/* Effective latency mode: esplus_cfg.latency_mode, but nudge when a runtime target is set and the env mode is off. */
+int esplus_lat_mode(void);
 
 /* One sampler step (playing time, depth, fps). The sampler thread calls it every
  * depth_poll_ms; the host test calls it with a fake clock. */

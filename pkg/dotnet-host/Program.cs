@@ -280,6 +280,10 @@ namespace MoonlightHost
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)] public delegate int GetStatsOsdDelegate();
         public static SetStatsOsdDelegate   SetStatsOsd;     // null with an engine that lacks it
         public static GetStatsOsdDelegate   GetStatsOsd;     // null with an engine that lacks it
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)] public delegate int SetTargetDepthDelegate(int ms);
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)] public delegate int GetTargetDepthDelegate();
+        public static SetTargetDepthDelegate SetTargetDepth; // null with an engine that lacks it
+        public static GetTargetDepthDelegate GetTargetDepth; // null with an engine that lacks it
 
         public static SetAudioCbDelegate    SetAudioCb;      // null with an engine that lacks it
         public static SetAudioDropsDelegate SetAudioDrops;   // null with an engine that lacks it
@@ -346,6 +350,10 @@ namespace MoonlightHost
             catch (EntryPointNotFoundException) { SetStatsOsd = null; }
             try { GetStatsOsd = MemLoader.GetDelegate<GetStatsOsdDelegate>(h, "ml_engine_get_stats_osd"); }
             catch (EntryPointNotFoundException) { GetStatsOsd = null; }
+            try { SetTargetDepth = MemLoader.GetDelegate<SetTargetDepthDelegate>(h, "ml_engine_set_target_depth_ms"); }
+            catch (EntryPointNotFoundException) { SetTargetDepth = null; }
+            try { GetTargetDepth = MemLoader.GetDelegate<GetTargetDepthDelegate>(h, "ml_engine_get_target_depth_ms"); }
+            catch (EntryPointNotFoundException) { GetTargetDepth = null; }
             try { GamepadArrival = MemLoader.GetDelegate<GamepadArrivalDelegate>(h, "ml_engine_gamepad_arrival"); }
             catch (EntryPointNotFoundException) { GamepadArrival = null; }
             try { GamepadState = MemLoader.GetDelegate<GamepadStateDelegate>(h, "ml_engine_gamepad_state"); }
@@ -1018,6 +1026,18 @@ namespace MoonlightHost
                         Log.Info("stats osd " + on + " -> " + rc + " win " + win);
                         r.Add("rc", rc.ToString());
                         if (Engine.GetStatsOsd != null) r.Add("win", win.ToString());
+                        return null;
+                    }
+                case "targetDepth":
+                    {
+                        int ms;
+                        if (!int.TryParse(Item(b, "ms"), out ms)) return "bad args";
+                        if (Engine.SetTargetDepth == null) return "not supported";
+                        int rc = Engine.SetTargetDepth(ms);   // lock-free in the engine, no lock held here
+                        int cur = Engine.GetTargetDepth != null ? Engine.GetTargetDepth() : rc;
+                        Log.Info("target depth " + ms + " -> " + rc);
+                        r.Add("rc", rc.ToString());
+                        r.Add("ms", cur.ToString());
                         return null;
                     }
                 case "toggleStats": return ToggleStats(Item(b, "on"), r);

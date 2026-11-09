@@ -109,13 +109,14 @@ static int VidDecSubmit(PDECODE_UNIT du) {
   }
   if (!s_have_base) { s_base_pts_ms = du->presentationTimeMs; s_have_base = 1; }
   int64_t pts_ms;
-  if (esplus_cfg.latency_mode == ESPLUS_LAT_ARRIVAL) {
+  int mode = esplus_lat_mode();
+  if (mode == ESPLUS_LAT_ARRIVAL) {
     uint64_t now = esplus_mono_ms();
     if (!s_have_arrival) { s_arrival_base_ms = now; s_have_arrival = 1; }
     pts_ms = (int64_t)(now - s_arrival_base_ms);
   } else {
     pts_ms = (int64_t)(du->presentationTimeMs - s_base_pts_ms);
-    if (esplus_cfg.latency_mode == ESPLUS_LAT_NUDGE) pts_ms -= esplus_correction_ms();
+    if (mode == ESPLUS_LAT_NUDGE) pts_ms -= esplus_correction_ms();
   }
   if (pts_ms < 0) pts_ms = 0;
   /* the player's PTS resolution is 1 ms: keep PTS strictly increasing */

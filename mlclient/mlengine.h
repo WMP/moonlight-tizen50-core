@@ -158,6 +158,15 @@ int ml_engine_get_audio_stats(ml_engine_audio_stats *out);
 int ml_engine_set_stats_osd(int on);
 int ml_engine_get_stats_osd(void);
 
+/* Runtime latency target: the queue depth (ms) that the nudge pacing steers to. The value lives as
+ * long as the engine (it is not reset per session); MLENGINE_TARGET_DEPTH_MS (default 50) is only
+ * the initial default. set clamps ms to [20, 500] and returns the applied value; a negative ms
+ * changes nothing and returns -1. A set target turns on nudge pacing when MLENGINE_LATENCY_MODE is
+ * unset or off. Callable before or during a stream (the sampler reads it at its next tick). Works
+ * in release builds. get returns the set value, else the env default. */
+int ml_engine_set_target_depth_ms(int ms);
+int ml_engine_get_target_depth_ms(void);
+
 #ifdef __cplusplus
 }
 #endif

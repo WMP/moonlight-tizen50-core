@@ -331,6 +331,8 @@ is created (for example on the CLI harness command line; the .NET host sets none
 | `MLENGINE_PLAYER_REBUILD_MAX` | `1` (0 = off) | player rebuilds per session after a failed `start()` or an unreadable playing time |
 | `MLENGINE_FATAL_STALL_MS` | `10000` (0 = off) | fatal `-111`: playing time frozen this long while submitting |
 
+`mlTargetDepth(ms)` in the UI console sets the `nudge` target at run time (20..500 ms, clamped). The engine keeps it for the life of the app and it also turns on `nudge` pacing, so it works on a TV where no env variable can be set. A lower target gives lower latency but a higher risk of underruns (`uo` in the overlay); 50 ms is the safe default. `MLENGINE_TARGET_DEPTH_MS` stays the initial default until the first call.
+
 **Overlay.** `toggleStats` in the UI turns on a live overlay (`mlstats` events from
 `ml_engine_get_stats`, every 500 ms); see `pkg/ui/PROTOCOL.md`. The UI's performance statistics setting turns it on at stream start.
 It also shows the host audio counters.

@@ -12,6 +12,9 @@
 #define LAST_N 8
 #define OUT_MAX 2048
 
+/* weak: some tests link mldiag.c without esplus_player.c; lock-free, so it is safe under s_mu */
+int ml_engine_get_target_depth_ms(void) __attribute__((weak));
+
 static pthread_mutex_t s_mu = PTHREAD_MUTEX_INITIALIZER;
 static mldiag_cfg s_cfg;
 static char s_appver[64], s_gfever[64], s_rtsp[12] = "-", s_host[256];   /* s_host: only to mask the cc lines */
@@ -303,6 +306,7 @@ void mldiag_fail(int code, int stage, const char *stage_name, int host_feature_f
       GET(C_ADEC), GET(C_ADECFAIL), __atomic_load_n(&s_adec_err, __ATOMIC_RELAXED), player_errors, player_last_error);
   if (s_cu_n) ADD(" catchup=%d/%d/%d", s_cu_n, s_cu_depth, s_cu_rc); else ADD(" catchup=0/-/-");
   ADD(" osd=%d/%s", s_osd_want, s_osd_win == 1 ? "lowered" : s_osd_win == 2 ? "raised" : s_osd_win < 0 ? "nosym" : "-");
+  if (ml_engine_get_target_depth_ms) ADD(" target=%d", ml_engine_get_target_depth_ms()); else ADD(" target=-");
   char tS[4][24], pS[2][24];   /* ms after prepare_async, "-" = not reached */
   const long long ev[4] = { s_t_pdone, s_t_err, s_t_v1, s_t_a1 }, pv[2] = { s_vpts1, s_apts1 };
   for (int i = 0; i < 4; i++) { if (ev[i] < 0 || s_t_prep < 0) snprintf(tS[i], sizeof tS[i], "-"); else snprintf(tS[i], sizeof tS[i], "%lld", ev[i] - s_t_prep); }

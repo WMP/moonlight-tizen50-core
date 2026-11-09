@@ -116,10 +116,27 @@ int32_t esplus_correction_ms(void) { return s_corr_ms; }
 uint32_t esplus_sample_seq(void) { return s_tick_seq; }
 
 
+/* Runtime target depth (ml_engine_set_target_depth_ms): engine lifetime, never reset per session; -1 = not set.
+   esplus_cfg stays read-only after load_cfg; this override wins over it. */
+static volatile int s_target_set = -1;
+#define TARGET_MIN_MS 20
+#define TARGET_MAX_MS 500
+
+/* A set target also turns on nudge pacing when the env mode is off; otherwise it would do nothing on a TV. */
+int esplus_lat_mode(void) {
+  if (esplus_cfg.latency_mode == ESPLUS_LAT_OFF && __atomic_load_n(&s_target_set, __ATOMIC_RELAXED) >= 0) return ESPLUS_LAT_NUDGE;
+  return esplus_cfg.latency_mode;
+}
+static int eff_target_ms(void) {
+  int t = __atomic_load_n(&s_target_set, __ATOMIC_RELAXED);
+  return t >= 0 ? t : esplus_cfg.target_depth_ms;
+}
+
 static void nudge(int32_t depth, uint64_t now_ms) {
-  if (esplus_cfg.latency_mode != ESPLUS_LAT_NUDGE) return;
+  if (esplus_lat_mode() != ESPLUS_LAT_NUDGE) return;
   if (s_tick_prev_ms) {
-    int64_t err = (int64_t)depth - esplus_cfg.target_depth_ms, hyst = esplus_cfg.target_depth_ms / 2;
+    int target = eff_target_ms();
+    int64_t err = (int64_t)depth - target, hyst = target / 2;
     if (hyst < 10) hyst = 10;
     int64_t step = (int64_t)esplus_cfg.nudge_max_ms_per_s * (int64_t)(now_ms - s_tick_prev_ms);   /* us */
     if (err > hyst) s_corr_us += err * 1000 < step ? err * 1000 : step;
@@ -605,6 +622,20 @@ int ml_engine_set_stats_osd(int on) {
   return 0;
 }
 int ml_engine_get_stats_osd(void) { return s_osd_win; }
+
+/* Host API: lock-free (s_lock is held by the sampler across player I/O); the sampler reads it at its next tick. */
+int ml_engine_set_target_depth_ms(int ms) {
+  if (ms < 0) return -1;
+  if (ms < TARGET_MIN_MS) ms = TARGET_MIN_MS;
+  if (ms > TARGET_MAX_MS) ms = TARGET_MAX_MS;
+  __atomic_store_n(&s_target_set, ms, __ATOMIC_RELAXED);
+  MLT("ml_engine_set_target_depth_ms(%d)", ms);
+  return ms;
+}
+int ml_engine_get_target_depth_ms(void) {
+  int t = __atomic_load_n(&s_target_set, __ATOMIC_RELAXED);
+  return t >= 0 ? t : mlc_env_int("MLENGINE_TARGET_DEPTH_MS", 50);
+}
 
 /* called from video start; prepares on the first call, later calls do nothing. */
 void esplus_prepare(void) {
