@@ -371,6 +371,53 @@ test('mlStatsOsd sends statsOsd and logs the rc and the window', async function 
   assert.ok(warns.some(function (w) { return w.indexOf('[mlbridge] stats over video failed') === 0; }));
 });
 
+// A fresh load of mlbridge.js with its own storage; returns the overlay element after the first mlstats event.
+function freshOverlay(ls) {
+  var els = [], lst, w = { ML_TRACE: false };
+  var sb = { window: w, Promise: Promise, Uint8Array: Uint8Array, ArrayBuffer: ArrayBuffer, localStorage: ls,
+    tizen: { application: { getAppInfo: function () { return { id: 'x', version: '1', packageId: 'p' }; }, getAppsContext: function (ok) { ok([]); }, launch: function (i, ok) { ok(); } },
+      messageport: { requestLocalMessagePort: function () { return { addMessagePortListener: function (f) { lst = f; } }; },
+        requestRemoteMessagePort: function () { return { sendMessage: function (m) { lst([{ key: 'id', value: fields(m).id }]); } }; } } },
+    document: { addEventListener: function () {}, body: { appendChild: function (e) { els.push(e); } }, createElement: function () { return { style: {} }; }, getElementById: function () { return null; } },
+    console: { log: function () {}, warn: function () {}, error: function () {} },
+    setTimeout: function () { return 1; }, clearTimeout: function () {}, setInterval: function () { return 1; }, clearInterval: function () {},
+    navigator: { getGamepads: function () { return []; } } };
+  vm.runInNewContext(fs.readFileSync(__dirname + '/../pkg/ui/mlbridge.js', 'utf8'), sb);
+  return w.SyncFunctions.toggleStats().then(function () { lst(STATS); return { win: w, el: els[0] }; });
+}
+function px(el) { return /font:(\d+)px monospace/.exec(el.style.cssText)[1]; }
+
+test('mlStatsSize: default 24 px, set at once and saved, bad values rejected, report', async function () {
+  var ls = { _d: {}, getItem: function (k) { return this._d[k] === undefined ? null : this._d[k]; }, setItem: function (k, v) { this._d[k] = String(v); } };
+  var o = await freshOverlay(ls), el = o.el, win = o.win, sandbox = { localStorage: ls };
+  assert.strictEqual(px(el), '24');
+  assert.ok(/24px/.test(win.mlStatsSize()));
+  assert.ok(/30px \(saved\)/.test(win.mlStatsSize(30)));
+  assert.strictEqual(el.style.fontSize, '30px');
+  assert.strictEqual(sandbox.localStorage.getItem('mlStatsSize'), '30');
+  [5, 200, 'abc', NaN, Infinity, null].forEach(function (v) {
+    assert.strictEqual(win.mlStatsSize(v), 'mlStatsSize: px must be 8..96');
+  });
+  assert.strictEqual(el.style.fontSize, '30px');
+  assert.strictEqual(sandbox.localStorage.getItem('mlStatsSize'), '30');
+  assert.ok(/30px$/.test(win.mlStatsSize()));
+});
+
+test('mlStatsSize: a new overlay uses the saved value; bad or throwing storage gives 24', async function () {
+  var ls = { _d: { mlStatsSize: '30' }, getItem: function (k) { return this._d[k] === undefined ? null : this._d[k]; }, setItem: function (k, v) { this._d[k] = String(v); } };
+  var o = await freshOverlay(ls);
+  assert.strictEqual(px(o.el), '30');
+  ls._d.mlStatsSize = 'junk';
+  assert.strictEqual(px((await freshOverlay(ls)).el), '24');
+  var bad = { getItem: function () { throw new Error('no'); }, setItem: function () { throw new Error('no'); } };
+  o = await freshOverlay(bad);
+  assert.strictEqual(px(o.el), '24');
+  assert.ok(/40px \(saved\)/.test(o.win.mlStatsSize(40)));   // the throw is ignored; applied now
+  assert.strictEqual(o.el.style.fontSize, '40px');
+  o = await freshOverlay(undefined);   // no localStorage at all
+  assert.strictEqual(px(o.el), '24');
+});
+
 test('toggleStats logs the osd field of the reply', async function () {
   async function press(rep) {
     var n = sent.length, p = win.SyncFunctions.toggleStats();

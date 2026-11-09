@@ -263,12 +263,18 @@
   var wantStats = false;   // startRequest a[29]: turn the overlay on at Connection Established
   var statsOn = false, statsEl = null, statsGen = 0;   // statsGen: bumped on streamTerminated
   var audioRoute = 'none';   // last mlaroute: 'native' | 'webaudio' | 'none' (see PROTOCOL.md)
+  var STATS_SIZE_KEY = 'mlStatsSize', STATS_SIZE_DEFAULT = 24;
+  function statsSizeStored() {   // px; the default for a missing or invalid value
+    var v = NaN;
+    try { v = Number(localStorage.getItem(STATS_SIZE_KEY)); } catch (e) {}
+    return v >= 8 && v <= 96 ? Math.round(v) : STATS_SIZE_DEFAULT;
+  }
   function statsDiv(create) {
     if (!statsEl && create && typeof document !== 'undefined' && document.body && document.createElement) {
       statsEl = document.createElement('div');
       statsEl.id = 'mlstats';
       statsEl.style.cssText = 'position:fixed;top:0;left:0;background:rgba(0,0,0,.55);color:#fff;' +
-        'font:12px monospace;padding:6px 8px;z-index:99999;white-space:pre';
+        'font:' + statsSizeStored() + 'px monospace;padding:.5em .7em;z-index:99999;white-space:pre';
       document.body.appendChild(statsEl);
     }
     return statsEl;
@@ -670,6 +676,17 @@
       console.warn('[mlbridge] stats over video failed:', e);
     });
     return 'stats over video ' + (on ? 'on' : 'off') + ' requested';
+  };
+
+  // mlStatsSize(px): font size of the stats overlay, 8..96 px (default 24), kept in local storage.
+  // No argument: report the size.
+  window.mlStatsSize = function (px) {
+    if (px === undefined) return 'stats overlay font ' + (statsEl && parseInt(statsEl.style.fontSize, 10) || statsSizeStored()) + 'px';
+    px = typeof px === 'number' && isFinite(px) ? Math.round(px) : NaN;
+    if (!(px >= 8 && px <= 96)) return 'mlStatsSize: px must be 8..96';
+    try { localStorage.setItem(STATS_SIZE_KEY, String(px)); } catch (e) {}
+    if (statsEl) statsEl.style.fontSize = px + 'px';
+    return 'stats overlay font ' + px + 'px (saved)';
   };
 
   // Diagnostics in this console (on a retail TV, Apps2Samsung's debug console is the

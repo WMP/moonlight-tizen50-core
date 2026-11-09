@@ -338,6 +338,7 @@ While the overlay is on, the engine lowers its video window under the UI window,
 shows over the picture (the UI is transparent during a stream). The state is remembered for later
 sessions. The console helper `mlStatsOsd(true|false)` sets it by hand. If the TV lacks the
 window stacking calls, the overlay shows only after the stream.
+The console helper `mlStatsSize(px)` sets the overlay font size (8 to 96 px, default 24 px). The UI keeps it in its local storage.
 
 ## Build (headless, Docker)
 
