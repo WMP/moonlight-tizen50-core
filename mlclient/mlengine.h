@@ -145,6 +145,19 @@ typedef struct ml_engine_audio_stats {
 } ml_engine_audio_stats;
 int ml_engine_get_audio_stats(ml_engine_audio_stats *out);
 
+/* Stats overlay over the picture. The UI draws the overlay in HTML; the engine's video window
+ * normally stacks above the UI window and hides it. With on != 0 the engine lowers its video
+ * window under the UI window (the UI is transparent while streaming), with on == 0 it raises
+ * it again. The state persists across sessions and applies at the next window creation; if a
+ * stream window exists it applies at once. Works in release builds.
+ * set returns 0 = stored (and applied to the stream window when one exists), -1 = the TV's
+ * libecore_wl2 lacks ecore_wl2_window_lower/raise (stored; the window stays on top and the
+ * HTML overlay is visible only after the stream).
+ * get returns 0 = not applied to a window yet, 1 = window lowered under the UI, 2 = window
+ * raised (on top), -1 = the stacking symbols are missing. */
+int ml_engine_set_stats_osd(int on);
+int ml_engine_get_stats_osd(void);
+
 #ifdef __cplusplus
 }
 #endif

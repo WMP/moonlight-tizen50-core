@@ -38,6 +38,8 @@ void ecore_main_loop_thread_safe_call_async(void (*cb)(void *data), void *data);
 /* weak: NULL if the TV's libecore_wl2 does not export them */
 void ecore_wl2_display_screen_size_get(void *d, int *w, int *h) __attribute__((weak));
 void ecore_wl2_display_sync(void *d) __attribute__((weak));   /* roundtrip: the outputs are known after it */
+void ecore_wl2_window_lower(void *w) __attribute__((weak));
+void ecore_wl2_window_raise(void *w) __attribute__((weak));
 void *ecore_main_loop_thread_safe_call_sync(void *(*cb)(void *data), void *data);
 
 extern void LiRequestIdrFrame(void);   /* moonlight-common-c: only sets an event, thread-safe */
@@ -492,6 +494,29 @@ int esplus_add_video_info(const esplusplayer_video_stream_info *vi) {
  * already the main loop thread, as in the CLI). */
 struct win_req { int w, h, rc; };
 
+/* Stats overlay: lower the video window under the UI window. s_osd_want lives as long as the engine
+   (not reset per session); s_osd_win is the last result on the current window. */
+static volatile int s_osd_want;
+static volatile int s_osd_win;   /* 0 not applied, 1 lowered, 2 raised, -1 symbols missing */
+
+/* ON THE ECORE MAIN LOOP only. Never takes s_lock. */
+static void *osd_apply_main(void *arg) {
+  (void)arg;
+  int want = s_osd_want;
+  if (!s_win) { MLT("osd: no window, stored want=%d", want); return NULL; }
+  if (!ecore_wl2_window_lower || !ecore_wl2_window_raise) {
+    s_osd_win = -1;
+    MLT("osd: missing symbol(s):%s%s", ecore_wl2_window_lower ? "" : " ecore_wl2_window_lower", ecore_wl2_window_raise ? "" : " ecore_wl2_window_raise");
+  } else {
+    if (want) ecore_wl2_window_lower(s_win); else ecore_wl2_window_raise(s_win);
+    ecore_wl2_display_flush(s_disp);
+    s_osd_win = want ? 1 : 2;
+    MLT("osd: window %s", want ? "lowered" : "raised");
+  }
+  mldiag_osd(want, s_osd_win);
+  return NULL;
+}
+
 static void *win_create_main(void *arg) {
   struct win_req *r = arg;
   MLT("win: XDG_RUNTIME_DIR=%s WAYLAND_DISPLAY=%s", getenv("XDG_RUNTIME_DIR") ? getenv("XDG_RUNTIME_DIR") : "(unset)",
@@ -521,6 +546,9 @@ static void *win_create_main(void *arg) {
   if (!s_win) { PLOG("window_new failed\n"); r->rc = -1; return NULL; }
   ecore_wl2_window_alpha_set(s_win, 1);
   ecore_wl2_window_show(s_win);
+  s_osd_win = 0;
+  if (s_osd_want) osd_apply_main(NULL);   /* already on the main loop */
+  else mldiag_osd(0, 0);   /* a new window is on top by default */
   ecore_wl2_display_flush(s_disp);
   MLT("window shown");
   int ok = esplusplayer_set_ecore_display(s_pl, ESPLUSPLAYER_DISPLAY_TYPE_OVERLAY, s_win, 0, 0, sw, sh);
@@ -535,6 +563,7 @@ static void *win_create_main(void *arg) {
 static void *win_destroy_main(void *arg) {
   (void)arg;
   if (s_win) { ecore_wl2_window_free(s_win); s_win = NULL; }
+  s_osd_win = 0;   /* no window: nothing applied */
   if (s_disp) { ecore_wl2_display_disconnect(s_disp); s_disp = NULL; }
   if (s_ecore) { ecore_wl2_shutdown(); s_ecore = 0; }
   MLT("window destroyed");
@@ -564,6 +593,18 @@ int esplus_set_window(int w, int h) {
   MLT("esplus_set_window -> 0");
   return 0;
 }
+
+/* Host API (any thread but the sampler, no locks held). The state is stored; it is applied now when a window may exist. */
+int ml_engine_set_stats_osd(int on) {
+  s_osd_want = on ? 1 : 0;
+  MLT("ml_engine_set_stats_osd(%d)", s_osd_want);
+  mldiag_osd(s_osd_want, s_osd_win);
+  /* a window may exist: apply now (it also records a missing symbol for the ML-ERROR line) */
+  if (__atomic_load_n(&s_ecore, __ATOMIC_ACQUIRE)) ecore_main_loop_thread_safe_call_sync(osd_apply_main, NULL);
+  if (!ecore_wl2_window_lower || !ecore_wl2_window_raise) { MLT("osd: stacking symbols missing"); return -1; }
+  return 0;
+}
+int ml_engine_get_stats_osd(void) { return s_osd_win; }
 
 /* called from video start; prepares on the first call, later calls do nothing. */
 void esplus_prepare(void) {

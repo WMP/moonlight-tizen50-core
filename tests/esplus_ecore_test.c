@@ -28,7 +28,13 @@ void ecore_wl2_display_flush(void *x) { (void)x; }
 int scr_w, scr_h, syncs;   /* screen size the stubbed API reports (0x0 = no output) */
 void ecore_wl2_display_screen_size_get(void *x, int *ww, int *hh) { (void)x; *ww = scr_w; *hh = scr_h; }
 void ecore_wl2_display_sync(void *x) { (void)x; syncs++; }
-void *ecore_main_loop_thread_safe_call_sync(void *(*cb)(void *), void *data) { return cb(data); }
+static int in_main;   /* 1 while the call_sync stub runs a callback (the real main loop) */
+void *ecore_main_loop_thread_safe_call_sync(void *(*cb)(void *), void *data) { in_main = 1; void *r = cb(data); in_main = 0; return r; }
+#ifndef NO_OSD_SYMS
+static int lower_calls, raise_calls;
+void ecore_wl2_window_lower(void *x) { assert(in_main && x); lower_calls++; }
+void ecore_wl2_window_raise(void *x) { assert(in_main && x); raise_calls++; }
+#endif
 /* async: queued, the test runs it with run_async() (inside the stub it would deadlock on s_lock; the real main loop runs it later) */
 static void (*async_cb[4])(void *); static void *async_data[4]; static int async_n;
 void ecore_main_loop_thread_safe_call_async(void (*cb)(void *), void *data) { assert(async_n < 4); async_cb[async_n] = cb; async_data[async_n++] = data; }
@@ -76,6 +82,8 @@ extern int esplus_submit(const esplusplayer_es_packet *pkt);
 extern int esplus_submit_ep(const esplusplayer_es_packet *pkt, unsigned epoch);
 extern void esplus_prepare(void);
 extern int esplus_add_video_info(const esplusplayer_video_stream_info *vi);
+extern int ml_engine_set_stats_osd(int on);
+extern int ml_engine_get_stats_osd(void);
 static int hook_ran, hook_ret, hook_sp;
 static void vsub(uint64_t pts_ms);
 void rebuild_hook_submit(void) {
@@ -85,7 +93,18 @@ void rebuild_hook_submit(void) {
 static void vsub(uint64_t pts_ms) { esplusplayer_es_packet p = {ESPLUSPLAYER_STREAM_TYPE_VIDEO, NULL, 1, pts_ms * 1000000ull, 0}; esplus_submit(&p); }
 /* start a session on a stubbed, prepared and started player */
 static void begin(void) { esplus_create_open(); cb_prepared(1); esplus_prepare(); play_ms = 0; play_ok = 1; vsub(0); }
-int main(void) {
+int main(int argc, char **argv) {
+  (void)argv;
+  if (argc > 1) {   /* nosym: built with -DNO_OSD_SYMS, the TV's libecore_wl2 lacks the stacking calls */
+    char line[4096]; ecore_cnt = 1;
+    assert(ml_engine_set_stats_osd(1) == -1);
+    esplus_create_open(); assert(esplus_set_window(1280, 720) == 0); assert(ml_engine_get_stats_osd() == -1);
+    assert(ml_engine_set_stats_osd(0) == -1 && ml_engine_get_stats_osd() == -1);   /* mid-stream toggle: recorded, nothing ends */
+    assert(ml_engine_set_stats_osd(1) == -1 && ml_engine_get_stats_osd() == -1);
+    mldiag_fail(-1, -1, NULL, 0, 0, 0, 0, 0, 0, 0, 0); mldiag_last(line, sizeof line); assert(strstr(line, " osd=1/nosym"));
+    esplus_close(); assert(ecore_cnt == 1 && wl2_cnt == 0);
+    puts("osd nosym ok"); return 0;
+  }
   /* the host app already holds one ecore reference */
   ecore_cnt = 1;
   /* 1: close without any window (setup failed before set_window) must not shut down ecore */
@@ -385,5 +404,26 @@ int main(void) {
   usleep(150000); assert(play_calls >= 1);
   esplus_close(); int n = play_calls; usleep(120000); assert(play_calls == n);
   unsetenv("MLENGINE_DEPTH_POLL_MS");
+#ifndef NO_OSD_SYMS
+  /* o: stats overlay (window stacking) */
+  { esplusplayer_video_stream_info vi = {NULL, 0, 1, 1280, 720, 1280, 720, 60, 1}; char line[4096];
+    assert(lower_calls == 0 && raise_calls == 0);   /* default: a new window is not touched */
+    esplus_create_open(); assert(esplus_set_window(1280, 720) == 0); assert(lower_calls == 0 && raise_calls == 0 && ml_engine_get_stats_osd() == 0);
+    esplus_close();
+    assert(ml_engine_set_stats_osd(1) == 0 && lower_calls == 0 && ml_engine_get_stats_osd() == 0);   /* no window: stored */
+    start_ret = 0; esplus_create_open(); assert(esplus_set_window(1280, 720) == 0);
+    assert(lower_calls == 1 && raise_calls == 0 && ml_engine_get_stats_osd() == 1);
+    assert(ml_engine_set_stats_osd(0) == 0 && raise_calls == 1 && lower_calls == 1 && ml_engine_get_stats_osd() == 2);
+    assert(ml_engine_set_stats_osd(1) == 0 && lower_calls == 2 && ml_engine_get_stats_osd() == 1);
+    { int c0 = create_calls; esplus_add_video_info(&vi); cb_prepared(1); esplus_prepare(); vsub(0); esplus_sample_tick(1000); run_async();   /* rebuild */
+      assert(create_calls == c0 + 1); }
+    assert(lower_calls == 2 && raise_calls == 1 && ml_engine_get_stats_osd() == 1);
+    mldiag_fail(-1, -1, NULL, 0, 0, 0, 0, 0, 0, 0, 0); mldiag_last(line, sizeof line); assert(strstr(line, " osd=1/lowered"));
+    esplus_close(); assert(ecore_cnt == 1 && wl2_cnt == 0 && ml_engine_get_stats_osd() == 0); start_ret = 1;
+    esplus_create_open(); assert(esplus_set_window(1280, 720) == 0); assert(lower_calls == 3 && ml_engine_get_stats_osd() == 1);   /* want remembered */
+    esplus_close(); assert(ecore_cnt == 1 && wl2_cnt == 0);
+    ml_engine_set_stats_osd(0);
+  }
+#endif
   puts("ecore balance ok"); return 0;
 }

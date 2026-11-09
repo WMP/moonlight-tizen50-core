@@ -221,6 +221,17 @@ int main(void) {
   fail(-101); mldiag_last(buf, sizeof buf);
   assert(strstr(buf, " catchup=0/-/-"));
 
+  /* stats overlay: want survives mldiag_reset, the window result does not */
+  mldiag_reset(&CFG);
+  fail(-101); mldiag_last(buf, sizeof buf);
+  assert(strstr(buf, " catchup=0/-/- osd=0/- |"));
+  mldiag_osd(1, 1); fail(-101); mldiag_last(buf, sizeof buf); assert(strstr(buf, " osd=1/lowered"));
+  mldiag_osd(0, 2); fail(-101); mldiag_last(buf, sizeof buf); assert(strstr(buf, " osd=0/raised"));
+  mldiag_osd(1, -1); fail(-101); mldiag_last(buf, sizeof buf); assert(strstr(buf, " osd=1/nosym"));
+  mldiag_reset(&CFG);
+  fail(-101); mldiag_last(buf, sizeof buf); assert(strstr(buf, " osd=1/-"));
+  mldiag_osd(0, 0);
+
   /* the host reports its audio counters after the failure: mldiag_last shows the values at read time, the rest is unchanged */
   mldiag_reset(&CFG); mldiag_aout(1); mldiag_aframe(960);
   fail(-101); mldiag_last(buf, sizeof buf);

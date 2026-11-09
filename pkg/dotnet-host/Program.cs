@@ -276,6 +276,10 @@ namespace MoonlightHost
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)] public delegate void SetGameModeDelegate(int on);
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)] public delegate int TvGameModeDelegate(int on, int saveType);
         public static TvGameModeDelegate    TvGameMode;      // null with an engine that lacks it
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)] public delegate int SetStatsOsdDelegate(int on);
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)] public delegate int GetStatsOsdDelegate();
+        public static SetStatsOsdDelegate   SetStatsOsd;     // null with an engine that lacks it
+        public static GetStatsOsdDelegate   GetStatsOsd;     // null with an engine that lacks it
 
         public static SetAudioCbDelegate    SetAudioCb;      // null with an engine that lacks it
         public static SetAudioDropsDelegate SetAudioDrops;   // null with an engine that lacks it
@@ -338,6 +342,10 @@ namespace MoonlightHost
             catch (EntryPointNotFoundException) { SetGameMode = null; }
             try { TvGameMode = MemLoader.GetDelegate<TvGameModeDelegate>(h, "ml_engine_tv_game_mode"); }
             catch (EntryPointNotFoundException) { TvGameMode = null; }
+            try { SetStatsOsd = MemLoader.GetDelegate<SetStatsOsdDelegate>(h, "ml_engine_set_stats_osd"); }
+            catch (EntryPointNotFoundException) { SetStatsOsd = null; }
+            try { GetStatsOsd = MemLoader.GetDelegate<GetStatsOsdDelegate>(h, "ml_engine_get_stats_osd"); }
+            catch (EntryPointNotFoundException) { GetStatsOsd = null; }
             try { GamepadArrival = MemLoader.GetDelegate<GamepadArrivalDelegate>(h, "ml_engine_gamepad_arrival"); }
             catch (EntryPointNotFoundException) { GamepadArrival = null; }
             try { GamepadState = MemLoader.GetDelegate<GamepadStateDelegate>(h, "ml_engine_gamepad_state"); }
@@ -615,14 +623,23 @@ namespace MoonlightHost
 
         // on: "true"/"false" = the state the UI wants (a lost reply then cannot invert it);
         // absent = flip. Returns an error text, or null when ok.
-        private static string ToggleStats(string on)
+        private static string ToggleStats(string on, Dictionary<string, object> r)
         {
             if (Engine.GetStats == null) return "not supported";
+            bool want;
             lock (s_statsLock)
             {
-                bool want = on == null ? s_stats == null : on == "true";
+                want = on == null ? s_stats == null : on == "true";
                 if (!want) { s_stats?.Dispose(); s_stats = null; }
                 else if (s_stats == null) s_stats = new System.Threading.Timer(_ => StatsTick(), null, 500, 500);
+            }
+            if (Engine.SetStatsOsd != null)   // outside s_statsLock: the engine call may wait for the main loop
+            {
+                int rc = Engine.SetStatsOsd(want ? 1 : 0);
+                int win = Engine.GetStatsOsd != null ? Engine.GetStatsOsd() : 0;
+                Log.Info("stats osd " + want + " -> " + rc + " win " + win);
+                r.Add("osd", rc.ToString());
+                if (Engine.GetStatsOsd != null) r.Add("osdWin", win.ToString());
             }
             return null;
         }
@@ -992,7 +1009,18 @@ namespace MoonlightHost
                         r.Add("rc", rc.ToString());
                         return null;
                     }
-                case "toggleStats": return ToggleStats(Item(b, "on"));
+                case "statsOsd":
+                    {
+                        bool on = Item(b, "on") == "true";
+                        if (Engine.SetStatsOsd == null) return "not supported";
+                        int rc = Engine.SetStatsOsd(on ? 1 : 0);   // no lock held: the engine call may wait for the main loop
+                        int win = Engine.GetStatsOsd != null ? Engine.GetStatsOsd() : 0;
+                        Log.Info("stats osd " + on + " -> " + rc + " win " + win);
+                        r.Add("rc", rc.ToString());
+                        if (Engine.GetStatsOsd != null) r.Add("win", win.ToString());
+                        return null;
+                    }
+                case "toggleStats": return ToggleStats(Item(b, "on"), r);
                 case "stun": r.Add("result", ""); return null;
                 case "wakeOnLan": return "not supported";
                 default: return "unknown cmd " + cmd;

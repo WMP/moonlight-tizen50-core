@@ -23,6 +23,7 @@ static int s_vfmt, s_vw, s_vh, s_vfps, s_vrc, s_vset;
 static int s_rb_open = -99, s_rb_addv = -99, s_rb_disp = -99, s_rb_prep = -99;   /* player rebuild steps */
 static int s_open = -99, s_win = -99, s_prep = -99, s_pdone = -99, s_start = -99, s_state = -99;   /* -99 = not reached */
 static int s_cu_n, s_cu_depth = -1, s_cu_rc = -99;   /* catch-up seek: count, depth before, result; -1/-99 = not reached */
+static int s_osd_want, s_osd_win;   /* stats overlay: want survives mldiag_reset (engine lifetime), win result is per session */
 static int s_first_pkt_ms = -1, s_sub_last_bad, s_vfail_last, s_afail_last;
 /* absolute now_ms() of the player events, -1 = not reached; printed relative to s_t_prep. Under s_mu (the hot path
    reads s_t_v1/s_t_a1 atomically and locks only for the first success). */
@@ -120,6 +121,9 @@ void mldiag_catchup(int depth_ms, int seek_ok) {
   pthread_mutex_lock(&s_mu); s_cu_n++; s_cu_depth = depth_ms; s_cu_rc = seek_ok; pthread_mutex_unlock(&s_mu);
 }
 
+void mldiag_osd(int want, int win) {
+  pthread_mutex_lock(&s_mu); s_osd_want = want; s_osd_win = win; pthread_mutex_unlock(&s_mu);
+}
 
 void mldiag_adec(int ok, int err) {
   if (ok) { INC(C_ADEC); return; }
@@ -132,7 +136,7 @@ void mldiag_reset(const mldiag_cfg *cfg) {
   s_aout = 0; s_abytes = 0; s_adrops = s_asent = s_asendfail = 0; s_aout_off = -1; s_aio_reason[0] = '-'; s_aio_reason[1] = 0;
   s_an_frames = s_an_under = s_an_over = s_an_drops = 0; s_an_bufms = 0;
   s_rb_open = s_rb_addv = s_rb_disp = s_rb_prep = -99;
-  s_cu_n = 0; s_cu_depth = -1; s_cu_rc = -99;
+  s_cu_n = 0; s_cu_depth = -1; s_cu_rc = -99; s_osd_win = 0;
   memset(s_first, 0, sizeof s_first); memset(s_last, 0, sizeof s_last);
   s_nlines = 0; s_out[0] = 0; s_code = 0;
   s_vset = 0; s_open = s_win = s_prep = s_pdone = s_start = s_state = -99; s_first_pkt_ms = -1; s_sub_last_bad = s_vfail_last = s_afail_last = 0;
@@ -298,6 +302,7 @@ void mldiag_fail(int code, int stage, const char *stage_name, int host_feature_f
       GET(C_VSUB), GET(C_ASUB), GET(C_SUBFAIL), s_sub_last_bad, GET(C_VSUBFAIL), s_vfail_last, GET(C_ASUBFAIL), s_afail_last,
       GET(C_ADEC), GET(C_ADECFAIL), __atomic_load_n(&s_adec_err, __ATOMIC_RELAXED), player_errors, player_last_error);
   if (s_cu_n) ADD(" catchup=%d/%d/%d", s_cu_n, s_cu_depth, s_cu_rc); else ADD(" catchup=0/-/-");
+  ADD(" osd=%d/%s", s_osd_want, s_osd_win == 1 ? "lowered" : s_osd_win == 2 ? "raised" : s_osd_win < 0 ? "nosym" : "-");
   char tS[4][24], pS[2][24];   /* ms after prepare_async, "-" = not reached */
   const long long ev[4] = { s_t_pdone, s_t_err, s_t_v1, s_t_a1 }, pv[2] = { s_vpts1, s_apts1 };
   for (int i = 0; i < 4; i++) { if (ev[i] < 0 || s_t_prep < 0) snprintf(tS[i], sizeof tS[i], "-"); else snprintf(tS[i], sizeof tS[i], "%lld", ev[i] - s_t_prep); }

@@ -48,6 +48,7 @@ void mldiag_adrops(int dropped);
 void mldiag_ahost(int sent, int dropped, int send_failures);
 void mldiag_rebuild(void);            /* one player rebuild (esplus_player.c) */
 void mldiag_catchup(int depth_ms, int seek_ok);   /* the one-time catch-up seek (esplus_player.c): depth before, seek result */
+void mldiag_osd(int want, int win);   /* stats overlay (esplus_player.c): want persists across sessions; win 0 none, 1 lowered, 2 raised, -1 no symbols */
 void mldiag_idr_retry(void);          /* one IDR request retry at the start (no video packet yet) */
 /* Build, store and print the line. extra values come from the caller; enc_* are the
    negotiated encryption features (supported by the host / requested by it / enabled). */

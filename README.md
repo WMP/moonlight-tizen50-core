@@ -334,6 +334,10 @@ is created (for example on the CLI harness command line; the .NET host sets none
 **Overlay.** `toggleStats` in the UI turns on a live overlay (`mlstats` events from
 `ml_engine_get_stats`, every 500 ms); see `pkg/ui/PROTOCOL.md`. The UI's performance statistics setting turns it on at stream start.
 It also shows the host audio counters.
+While the overlay is on, the engine lowers its video window under the UI window, so the overlay
+shows over the picture (the UI is transparent during a stream). The state is remembered for later
+sessions. The console helper `mlStatsOsd(true|false)` sets it by hand. If the TV lacks the
+window stacking calls, the overlay shows only after the stream.
 
 ## Build (headless, Docker)
 

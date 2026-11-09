@@ -305,6 +305,11 @@
   function toggleStats() {
     var want = !statsOn, gen = statsGen;
     return bridgeCall('toggleStats', { on: String(want) }, DEFAULT_TIMEOUT).then(function (r) {
+      if (r && r.osd !== undefined) {   // the engine lowers its video window under the UI while the overlay is on
+        if (String(r.osd) === '0') console.log('[mlbridge] stats over video: osd ' + r.osd + ' window ' + r.osdWin);
+        else console.warn('[mlbridge] stats over video: osd ' + r.osd + ' window ' + r.osdWin +
+          ': window stacking not supported by this TV: overlay visible only after the stream');
+      }
       if (gen !== statsGen) return r;   // the stream ended meanwhile: the host stopped polling
       if (!want) resetStats();
       else statsOn = true;   // the overlay appears with the first mlstats event
@@ -652,6 +657,19 @@
       console.warn('[mlbridge] TV game mode failed:', e);
     });
     return 'TV game mode ' + (on ? 'on' : 'off') + ' requested';
+  };
+
+  // mlStatsOsd(true|false): the engine lowers (true) or raises (false) its video window, so the stats
+  // overlay shows over the picture. rc: 0 ok, -1 not supported by this TV. window: 1 lowered, 2 raised,
+  // 0 no stream window yet (applied when the next stream starts). The state is kept for later streams.
+  window.mlStatsOsd = function (on) {
+    bridgeCall('statsOsd', { on: String(!!on) }, DEFAULT_TIMEOUT).then(function (r) {
+      var msg = '[mlbridge] stats over video ' + (on ? 'on' : 'off') + ' -> rc ' + r.rc + ' window ' + r.win;
+      if (String(r.rc) === '0') console.log(msg); else console.warn(msg);
+    }, function (e) {
+      console.warn('[mlbridge] stats over video failed:', e);
+    });
+    return 'stats over video ' + (on ? 'on' : 'off') + ' requested';
   };
 
   // Diagnostics in this console (on a retail TV, Apps2Samsung's debug console is the
