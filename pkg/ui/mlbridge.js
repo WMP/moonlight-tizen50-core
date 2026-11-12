@@ -511,8 +511,9 @@
     else p.resolve(m);
   }
 
-  // The engine's game mode "off" right after the stop returns 0 but the TV keeps game mode; the same call a moment later works.
-  // Off must use save type 0 (stored setting); with save type 1 the TV returns to game mode after the app exits.
+  // Second full "off" after the engine's own (a safety net; the engine sends the same two calls at the stop).
+  // A full off needs both calls: save type 1 clears the temporary override, save type 0 clears the stored setting
+  // (with only one of them the TV is in game mode again, now or after the app exits; observed on a TV).
   // shortcut: fixed 2 s delay, found by hand on one TV; make it longer or retry if a TV still keeps game mode.
   function tvGameModeOffLater() {
     if (!gameModeOnStream) return;
@@ -520,9 +521,15 @@
     var gen = streamGen;
     setTimeout(function () {
       if (gen !== streamGen) return;   // a new stream started meanwhile
-      bridgeCall('tvGameMode', { on: 'false', saveType: '0' }, DEFAULT_TIMEOUT).then(
-        function (r) { console.log('[mlbridge] TV game mode off after stream -> rc ' + r.rc); },
-        function (e) { console.warn('[mlbridge] TV game mode off after stream failed:', e); });
+      var rc = [];
+      function off(type) {   // always resolves; a failed call is warned and shown as '?'
+        return bridgeCall('tvGameMode', { on: 'false', saveType: type }, DEFAULT_TIMEOUT).then(
+          function (r) { rc.push(r.rc); },
+          function (e) { rc.push('?'); console.warn('[mlbridge] TV game mode off after stream failed:', e); });
+      }
+      off('1').then(function () { return off('0'); }).then(function () {
+        console.log('[mlbridge] TV game mode off after stream -> rc ' + rc.join('/'));
+      });
     }, 2000);
   }
 
