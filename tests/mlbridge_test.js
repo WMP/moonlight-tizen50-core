@@ -354,6 +354,54 @@ test('mlGameMode sends tvGameMode and logs the rc', async function () {
   assert.ok(warns.some(function (w) { return w.indexOf('[mlbridge] TV game mode failed') === 0; }));
 });
 
+test('TV game mode is switched off 2 s after the stream ends', async function () {
+  function start(gm) {
+    var a = ['host', 47989, 1920, 1080, 60, 20000, 'abcd', 7]; a[27] = gm;
+    sent.length = 0;
+    var p = win.sendMessage('startRequest', a);
+    reply(fields(sent[0]).id, {});
+    return p;
+  }
+  function gmCalls() { return sent.map(fields).filter(function (f) { return f.cmd === 'tvGameMode'; }); }
+  await start(true);
+  sent.length = 0;
+  listener([{ key: 'event', value: 'streamTerminated: 0' }]);
+  listener([{ key: 'event', value: 'streamTerminated: 0' }]);   // duplicate: still one call
+  advance(1999);
+  assert.strictEqual(gmCalls().length, 0);
+  advance(1);
+  var c = gmCalls();
+  assert.strictEqual(c.length, 1);
+  assert.strictEqual(c[0].on, 'false'); assert.strictEqual(String(c[0].saveType), '1');
+  await tick();
+  assert.strictEqual(gmCalls().length, 1, 'save type 0 waits for the first reply');
+  reply(c[0].id, { rc: '0' }); await tick();
+  c = gmCalls();
+  assert.strictEqual(c.length, 2);
+  assert.strictEqual(c[1].on, 'false'); assert.strictEqual(String(c[1].saveType), '0');
+  reply(c[1].id, { rc: '0' }); await tick();
+  assert.ok(logs.indexOf('[mlbridge] TV game mode off after stream -> rc 0/0') >= 0);
+  await start(false);
+  sent.length = 0;
+  listener([{ key: 'event', value: 'streamTerminated: 0' }]);
+  advance(5000);
+  assert.strictEqual(gmCalls().length, 0, 'game mode was not requested');
+  await start(true);
+  listener([{ key: 'event', value: 'streamTerminated: 0' }]);
+  await start(true);   // new stream within 2 s
+  sent.length = 0;
+  advance(5000);
+  assert.strictEqual(gmCalls().length, 0, 'new stream started');
+  listener([{ key: 'event', value: 'streamTerminated: 0' }]);
+  advance(2000);
+  reply(gmCalls()[0].id, { error: 'x' }); await tick();
+  assert.ok(warns.some(function (w) { return w.indexOf('[mlbridge] TV game mode off after stream failed') === 0; }));
+  assert.strictEqual(gmCalls().length, 2, 'save type 0 is sent after a failed first call');
+  reply(gmCalls()[1].id, { rc: '0' }); await tick();
+  assert.ok(logs.indexOf('[mlbridge] TV game mode off after stream -> rc ?/0') >= 0);
+  handled.length = 0;
+});
+
 test('mlStatsOsd sends statsOsd and logs the rc and the window', async function () {
   sent.length = 0;
   assert.ok(/on/.test(win.mlStatsOsd(true)));
