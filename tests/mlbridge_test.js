@@ -521,6 +521,25 @@ test('mlTargetDepth sends targetDepth and logs rc and ms', async function () {
   assert.ok(warns.some(function (w) { return w.indexOf('[mlbridge] target depth failed') === 0; }));
 });
 
+test('mlHdr sends only the given keys and logs the bits of the reply', async function () {
+  sent.length = 0;
+  assert.ok(/hdr test/.test(win.mlHdr({ force: 1, sei: 0 })));
+  var f = fields(sent[0]);
+  assert.strictEqual(f.cmd, 'hdrTest'); assert.strictEqual(f.force, '1'); assert.strictEqual(f.sei, '0');
+  assert.ok(!('color' in f));
+  reply(f.id, { rc: '5' }); await tick();   // force + color
+  assert.ok(logs.indexOf('[mlbridge] hdr test: force=1 sei=0 color=1') >= 0);
+  win.mlHdr();
+  f = fields(sent[1]);
+  assert.strictEqual(f.cmd, 'hdrTest'); assert.ok(!('force' in f) && !('sei' in f) && !('color' in f));
+  reply(f.id, { rc: '2' }); await tick();
+  assert.ok(logs.indexOf('[mlbridge] hdr test: force=0 sei=1 color=0') >= 0);
+  win.mlHdr({ color: 0 });
+  assert.strictEqual(fields(sent[2]).color, '0');
+  reply(fields(sent[2]).id, { error: 'not supported' }); await tick();
+  assert.ok(warns.some(function (w) { return w.indexOf('[mlbridge] hdr test failed') === 0; }));
+});
+
 test('toggleStats logs the osd field of the reply', async function () {
   async function press(rep) {
     var n = sent.length, p = win.SyncFunctions.toggleStats();

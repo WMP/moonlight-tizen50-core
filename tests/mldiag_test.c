@@ -165,39 +165,53 @@ int main(void) {
   /* audio output, IDR retries */
   mldiag_reset(&CFG);
   fail(-101); mldiag_last(buf, sizeof buf);
-  assert(strstr(buf, " idr_retry=0 sps=- | player "));
+  assert(strstr(buf, " idr_retry=0 sps=- | hdr "));
   assert(strstr(buf, " | aout none reason=- | ctl "));
   mldiag_aout(0);
   fail(-101); mldiag_last(buf, sizeof buf);
   assert(strstr(buf, " | aout none reason=no-callback | ctl "));
   mldiag_aout(1); mldiag_aframe(960); mldiag_aframe(960); mldiag_adrops(3); mldiag_idr_retry(); mldiag_idr_retry();
   fail(-101); mldiag_last(buf, sizeof buf);
-  assert(strstr(buf, " idr_retry=2 sps=- | player "));
+  assert(strstr(buf, " idr_retry=2 sps=- | hdr "));
   assert(strstr(buf, " | aout webaudio frames=2 bytes=1920 sent=0 drops=3 sendfail=0 | ctl "));
   mldiag_adrops(0);
   fail(-101); mldiag_last(buf, sizeof buf);
   assert(strstr(buf, " | aout webaudio frames=2 bytes=1920 sent=0 drops=0 sendfail=0 | ctl "));
   mldiag_reset(&CFG);
   fail(-101); mldiag_last(buf, sizeof buf);
-  assert(strstr(buf, " idr_retry=0 sps=- | player ") && strstr(buf, " | aout none reason=- | ctl "));
+  assert(strstr(buf, " idr_retry=0 sps=- | hdr ") && strstr(buf, " | aout none reason=- | ctl "));
 
   /* the last H.264 SPS: -, added without restriction, kept with the host's values, off, err; reset clears it */
   mldiag_reset(&CFG);
   mldiag_sps(MLDIAG_SPS_ADDED, 100, 32, 1, 2, 1, 0, 0, 0);
   fail(-101); mldiag_last(buf, sizeof buf);
-  assert(strstr(buf, " idr_retry=0 sps=added/p100/l32/ref1/poc2/vui1/br- | player "));
+  assert(strstr(buf, " idr_retry=0 sps=added/p100/l32/ref1/poc2/vui1/br- | hdr "));
   mldiag_sps(MLDIAG_SPS_KEPT, 100, 31, 1, 0, 1, 1, 0, 1);
   fail(-101); mldiag_last(buf, sizeof buf);
-  assert(strstr(buf, " idr_retry=0 sps=kept/p100/l31/ref1/poc0/vui1/br0:1 | player "));
+  assert(strstr(buf, " idr_retry=0 sps=kept/p100/l31/ref1/poc0/vui1/br0:1 | hdr "));
   mldiag_sps(MLDIAG_SPS_OFF, 66, 30, 2, 0, 0, 0, 0, 0);
   fail(-101); mldiag_last(buf, sizeof buf);
-  assert(strstr(buf, " idr_retry=0 sps=off/p66/l30/ref2/poc0/vui0/br- | player "));
+  assert(strstr(buf, " idr_retry=0 sps=off/p66/l30/ref2/poc0/vui0/br- | hdr "));
   mldiag_sps(MLDIAG_SPS_ERR, 0, 0, 0, 0, 0, 0, 0, 0);
   fail(-101); mldiag_last(buf, sizeof buf);
-  assert(strstr(buf, " idr_retry=0 sps=err | player ") && strlen(buf) < 2048);
+  assert(strstr(buf, " idr_retry=0 sps=err | hdr ") && strlen(buf) < 2048);
   mldiag_reset(&CFG);
   fail(-101); mldiag_last(buf, sizeof buf);
-  assert(strstr(buf, " idr_retry=0 sps=- | player "));
+  assert(strstr(buf, " idr_retry=0 sps=- | hdr "));
+
+  /* HDR host mode + HEVC SEI: never set, set, reset clears */
+  mldiag_reset(&CFG);
+  fail(-101); mldiag_last(buf, sizeof buf);
+  assert(strstr(buf, " | hdr host=-1 n=0 meta=- sei=- ins=0 col=-99/0 cs=--- test=--- | player "));   /* the test state was never set */
+  mldiag_hdr(1, 1, 1000, 50, 800, 400); mldiag_hevc_sei(2, 3); mldiag_hdr_sei_inserted(); mldiag_hdr_sei_inserted(); mldiag_hdr_color(-3, "oom"); mldiag_hdr_color(1, "ooo");
+  fail(-101); mldiag_last(buf, sizeof buf);
+  assert(strstr(buf, " | hdr host=1 n=1 meta=lum1000/50.cll800/400 sei=2/0x3 ins=2 col=1/2 cs=ooo test=--- | player "));
+  mldiag_hdr(0, 0, 0, 0, 0, 0); mldiag_hdr_test(1, 0, 1);
+  fail(-101); mldiag_last(buf, sizeof buf);
+  assert(strstr(buf, " | hdr host=0 n=2 meta=- sei=2/0x3 ins=2 col=1/2 cs=ooo test=101 | player "));
+  mldiag_reset(&CFG);   /* the test state is engine-wide: kept */
+  fail(-101); mldiag_last(buf, sizeof buf);
+  assert(strstr(buf, " | hdr host=-1 n=0 meta=- sei=- ins=0 col=-99/0 cs=--- test=101 | player "));
 
   /* native audio-io output (audio_opus.c): counters, and the fallback variant */
   mldiag_reset(&CFG);

@@ -735,6 +735,23 @@
     return 'TV game mode ' + (on ? 'on' : 'off') + ' requested';
   };
 
+  // mlHdr({force:1, sei:0, color:1}): HDR test mode of the engine. 1 = on, 0 = off, a missing key = keep;
+  // mlHdr() only shows the state. force = fixed HDR10 test metadata when the host is not in HDR mode.
+  // The state is kept until the host restarts.
+  window.mlHdr = function (opts) {
+    var f = {};
+    ['force', 'sei', 'color'].forEach(function (k) {
+      if (opts && opts[k] !== undefined && opts[k] !== null) f[k] = opts[k] ? '1' : '0';
+    });
+    bridgeCall('hdrTest', f, DEFAULT_TIMEOUT).then(function (r) {
+      var b = parseInt(r.rc, 10);
+      console.log('[mlbridge] hdr test: force=' + (b & 1) + ' sei=' + ((b >> 1) & 1) + ' color=' + ((b >> 2) & 1));
+    }, function (e) {
+      console.warn('[mlbridge] hdr test failed:', e);
+    });
+    return 'hdr test ' + (Object.keys(f).length ? 'set requested' : 'state requested');
+  };
+
   // mlStatsOsd(true|false): the engine lowers (true) or raises (false) its video window, so the stats
   // overlay shows over the picture. rc: 0 ok, -1 not supported by this TV. window: 1 lowered, 2 raised,
   // 0 no stream window yet (applied when the next stream starts). The state is kept for later streams.
@@ -918,7 +935,7 @@
           try { var me = tizen.application.getCurrentApplication().appInfo; trace('ui app ' + me.id + ', package ' + me.packageId + ', version ' + me.version); }
           catch (e) { trace('ui app info unavailable: ' + errText(e)); }
           try { trace('platform ' + tizen.systeminfo.getCapability('http://tizen.org/feature/platform.version')); } catch (e) {}
-          console.log('[mlbridge] diagnostics: mlDiag() = host engine checks, mlDiag("launch") = host start test');
+          console.log('[mlbridge] diagnostics: mlDiag() = host engine checks, mlDiag("launch") = host start test, mlHdr({force:1}) = HDR test mode');
         }
         connect();   // start/connect the host (commands queue until connected)
         if (debugStored()) window.mlDebug(true);

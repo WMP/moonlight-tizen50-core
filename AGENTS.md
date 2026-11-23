@@ -45,6 +45,7 @@ The point of this repo is to improve the client itself:
   test `tests/video_esplus_test.c`: PTS modes, FULL retries, late-frame cap). Needs the submodule.
   Run it after touching `mlclient/esplus_player.c`, `mlclient/esplus_stats.h` or `mlclient/video_esplus.c`.
   The same script also runs `tests/mldiag_test.c` (the `ML-ERROR` line); run it after touching `mlclient/mldiag.c`.
+  It also runs `tests/esplus_hdr_test.c` (HDR colour text, trackrenderer call chain); run it after touching `mlclient/esplus_hdr.c`.
   It also runs `tests/engine_pad_test.c` (gamepad calls, clamps, `pad` counters); run it after touching `mlclient/engine_pad.c`.
   It also runs `tests/engine_avoc_test.c` (TV game mode calls); run it after touching `mlclient/engine_avoc.c`.
   It also runs `tests/audio_opus_test.c` (Opus decode to PCM, the host audio callback); run it after touching `mlclient/audio_opus.c`.

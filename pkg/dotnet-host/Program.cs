@@ -276,6 +276,8 @@ namespace MoonlightHost
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)] public delegate void SetGameModeDelegate(int on);
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)] public delegate int TvGameModeDelegate(int on, int saveType);
         public static TvGameModeDelegate    TvGameMode;      // null with an engine that lacks it
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)] public delegate int SetHdrTestDelegate(int force, int sei, int color);
+        public static SetHdrTestDelegate    SetHdrTest;      // null with an engine that lacks it (the get call is not needed: set with -1 queries)
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)] public delegate int SetStatsOsdDelegate(int on);
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)] public delegate int GetStatsOsdDelegate();
         public static SetStatsOsdDelegate   SetStatsOsd;     // null with an engine that lacks it
@@ -346,6 +348,8 @@ namespace MoonlightHost
             catch (EntryPointNotFoundException) { SetGameMode = null; }
             try { TvGameMode = MemLoader.GetDelegate<TvGameModeDelegate>(h, "ml_engine_tv_game_mode"); }
             catch (EntryPointNotFoundException) { TvGameMode = null; }
+            try { SetHdrTest = MemLoader.GetDelegate<SetHdrTestDelegate>(h, "ml_engine_set_hdr_test"); }
+            catch (EntryPointNotFoundException) { SetHdrTest = null; }
             try { SetStatsOsd = MemLoader.GetDelegate<SetStatsOsdDelegate>(h, "ml_engine_set_stats_osd"); }
             catch (EntryPointNotFoundException) { SetStatsOsd = null; }
             try { GetStatsOsd = MemLoader.GetDelegate<GetStatsOsdDelegate>(h, "ml_engine_get_stats_osd"); }
@@ -1014,6 +1018,19 @@ namespace MoonlightHost
                         int rc;
                         lock (s_engineLock) rc = Engine.TvGameMode(on, saveType);
                         Log.Info("tv game mode " + on + " saveType " + saveType + " -> " + rc);
+                        r.Add("rc", rc.ToString());
+                        return null;
+                    }
+                case "hdrTest":
+                    {
+                        int force, sei, color;   // "1" / "0"; absent = keep (-1)
+                        if (!int.TryParse(Item(b, "force"), out force)) force = -1;
+                        if (!int.TryParse(Item(b, "sei"), out sei)) sei = -1;
+                        if (!int.TryParse(Item(b, "color"), out color)) color = -1;
+                        if (Engine.SetHdrTest == null) return "not supported";
+                        int rc;
+                        lock (s_engineLock) rc = Engine.SetHdrTest(force, sei, color);
+                        Log.Info("hdr test " + force + "/" + sei + "/" + color + " -> " + rc);
                         r.Add("rc", rc.ToString());
                         return null;
                     }

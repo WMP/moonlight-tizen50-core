@@ -81,6 +81,20 @@ static void cl_logMessage(const char *format, ...) {
   MLT("cc: %s", format);
 }
 
+/* HDR visibility: whether the host turned HDR on and which mastering metadata it sent (release too). */
+static void cl_setHdrMode(bool enabled) {
+  SS_HDR_METADATA m; memset(&m, 0, sizeof m);
+  int ok = enabled && LiGetHdrMetadata(&m);
+  char meta[160] = "meta=-";
+  if (ok) snprintf(meta, sizeof meta, "meta=ok lum=%u/%u cll=%u fall=%u prim=%u,%u/%u,%u/%u,%u wp=%u,%u",
+                   m.maxDisplayLuminance, m.minDisplayLuminance, m.maxContentLightLevel, m.maxFrameAverageLightLevel,
+                   m.displayPrimaries[0].x, m.displayPrimaries[0].y, m.displayPrimaries[1].x, m.displayPrimaries[1].y,
+                   m.displayPrimaries[2].x, m.displayPrimaries[2].y, m.whitePoint.x, m.whitePoint.y);
+  fprintf(stderr, "[ml] host HDR mode=%d %s\n", enabled ? 1 : 0, meta);
+  MLT("host HDR mode=%d %s", enabled ? 1 : 0, meta);
+  mldiag_hdr(enabled, ok, m.maxDisplayLuminance, m.minDisplayLuminance, m.maxContentLightLevel, m.maxFrameAverageLightLevel);
+}
+
 static void cl_stageStarting(int stage) { (void)stage; MLT("stage %d (%s) starting", stage, LiGetStageName(stage)); }
 static void cl_stageComplete(int stage) { (void)stage; MLT("stage %d (%s) complete", stage, LiGetStageName(stage)); }
 
@@ -96,6 +110,7 @@ static int start_connection(void) {
   cl.stageFailed = cl_stageFailed;
   cl.connectionTerminated = cl_connTerminated;
   cl.logMessage = cl_logMessage;
+  cl.setHdrMode = cl_setHdrMode;
 
   MLT("LiStartConnection %dx%d@%d %dkbps fmt=0x%x audio=0x%x pkt=%d", g_sc.width, g_sc.height, g_sc.fps,
       g_sc.bitrate, g_sc.supportedVideoFormats, g_sc.audioConfiguration, g_sc.packetSize);
@@ -188,6 +203,7 @@ int ml_engine_get_stats(ml_engine_stats *out) {
 }
 
 int ml_engine_last_error(char *buf, int len) { return mldiag_last(buf, len); }
+int ml_engine_full_range(void) { return g_sc.colorRange == COLOR_RANGE_FULL; }   /* engine-internal (video_esplus.c), not in mlengine.h */
 
 /* The player watchdog set a fatal code: report it and end the session (the host then reads the line). */
 static void check_player_fatal(void) {

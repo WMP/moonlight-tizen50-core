@@ -53,7 +53,21 @@ void mldiag_osd(int want, int win);   /* stats overlay (esplus_player.c): want p
    reorder/dec_buf are the host's own values, only valid when restr != 0. */
 enum { MLDIAG_SPS_ERR = -1, MLDIAG_SPS_KEPT = 0, MLDIAG_SPS_ADDED = 1, MLDIAG_SPS_OFF = 2 };
 void mldiag_sps(int state, int profile, int level, int ref_frames, int poc_type, int vui, int restr, int reorder, int dec_buf);
-void mldiag_idr_retry(void);          /* one IDR request retry at the start (no video packet yet) */
+/* The host's HDR mode (setHdrMode callback, engine_api.c): enabled, whether LiGetHdrMetadata worked, and its max/min
+   display luminance and max content light / frame average light level. Counts the calls; last values kept. */
+void mldiag_hdr(int enabled, int meta_ok, int max_lum, int min_lum, int max_cll, int max_fall);
+/* The last HEVC IDR frame (video_esplus.c): prefix SEI NAL count and payload mask (bit0 = 137 mastering display, bit1 = 144 content light level). */
+void mldiag_hevc_sei(int sei_nals, int mask);
+/* video_esplus.c built and inserted an HDR SEI into an HEVC IDR frame; shown as ins= (count per session). */
+void mldiag_hdr_sei_inserted(void);
+/* esplus_player.c applied the HDR colour text to the TV pipeline: rc of esplus_hdr_apply (1 ok, <0 failure) and its
+   three step letters (adapter, handle, time; o ok, n null, u unreadable, m mismatch, - not reached). Last values and the call
+   count are kept; shown as col=rc/count cs=steps (-99 = not tried, cs=---). */
+void mldiag_hdr_color(int rc, const char *steps);
+/* HDR test mode state (esplus_player.c, set on each ml_engine_set_hdr_test and at session start); engine lifetime, not
+   cleared by mldiag_reset. Shown as test=<force><sei><color> (three digits; --- = never set). */
+void mldiag_hdr_test(int force, int sei, int color);
+void mldiag_idr_retry(void);        /* one IDR request retry at the start (no video packet yet) */
 /* Build, store and print the line. extra values come from the caller; enc_* are the
    negotiated encryption features (supported by the host / requested by it / enabled). */
 void mldiag_fail(int code, int stage, const char *stage_name, int host_feature_flags,

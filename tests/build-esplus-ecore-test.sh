@@ -1,5 +1,5 @@
 #!/bin/sh
-# Build + run tests/esplus_ecore_test.c and tests/video_esplus_test.c on the host (no TV, no toolchain).
+# Build + run tests/esplus_ecore_test.c, tests/video_esplus_test.c and tests/esplus_hdr_test.c on the host (no TV, no toolchain).
 # esplusplayer_tv50.h asserts the 32-bit ARM struct layout; a 64-bit host cannot meet
 # it, and the test does not depend on it, so those asserts are compiled out here.
 set -e
@@ -41,8 +41,13 @@ for D in "" "-DMLT_TRACE"; do
     -o "$OUT-nosym" "$HERE/esplus_ecore_test.c" "$R/mlclient/esplus_player.c" "$R/mlclient/mldiag.c" -lpthread -ldl
   "$OUT-nosym" nosym 2>/dev/null
   gcc -std=gnu11 -Wall -Wextra -Werror $D '-D_Static_assert(a,b)=' -I"$R" -I"$R/mlclient" -I"$LC" \
-    -o "$OUT-video" "$HERE/video_esplus_test.c" "$R/mlclient/video_esplus.c" "$R/mlclient/h264_sps.c" "$R/mlclient/esplus_player.c" "$R/mlclient/mldiag.c" -lpthread -ldl
+    -Wl,--wrap=esplus_set_color_info -o "$OUT-video" "$HERE/video_esplus_test.c" "$R/mlclient/video_esplus.c" "$R/mlclient/h264_sps.c" "$R/mlclient/esplus_hdr.c" "$R/mlclient/esplus_player.c" "$R/mlclient/mldiag.c" -lpthread -ldl
   "$OUT-video" 2>/dev/null
+  gcc -std=gnu11 -Wall -Wextra -Werror $D -Ddlopen=fake_dlopen -Ddlsym=fake_dlsym -Ddlclose=fake_dlclose '-D_Static_assert(a,b)=' -I"$R" -I"$R/mlclient" \
+    -o "$OUT-hdr" "$HERE/esplus_hdr_test.c" "$R/mlclient/esplus_hdr.c"
+  "$OUT-hdr" 2>/dev/null
+  "$OUT-hdr" nolib 2>/dev/null
+  "$OUT-hdr" nostate 2>/dev/null
   gcc -std=gnu11 -Wall -Wextra -Werror $D -I"$R/mlclient" -I"$LC" \
     -o "$OUT-pad" "$HERE/engine_pad_test.c" "$R/mlclient/engine_pad.c" "$R/mlclient/mldiag.c" -lpthread -ldl
   "$OUT-pad" 2>/dev/null

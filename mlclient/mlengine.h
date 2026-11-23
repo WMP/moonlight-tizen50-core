@@ -167,6 +167,18 @@ int ml_engine_get_stats_osd(void);
 int ml_engine_set_target_depth_ms(int ms);
 int ml_engine_get_target_depth_ms(void);
 
+/* HDR test mode (UI console mlHdr). The state lives as long as the engine (not reset per session);
+ * works in release builds. Each argument: 0 = off, 1 = on, negative = keep the current value.
+ *   force: treat the host as in HDR mode with fixed HDR10 test metadata (1000/0.005 nit, BT.2020)
+ *          when the host sends none (the picture is then not correct; it only shows if the TV
+ *          switches to HDR). Initial 0.
+ *   sei:   insert the HDR SEI into HEVC IDR frames (initial: MLENGINE_HDR_SEI, default 1).
+ *   color: give the HDR10 colour text to the TV pipeline (initial: MLENGINE_HDR_COLOR, default 1).
+ * Both calls return the state as bits: 1 = force, 2 = sei, 4 = color. A running stream sees the
+ * change at its next IDR frame. */
+int ml_engine_set_hdr_test(int force, int sei, int color);
+int ml_engine_get_hdr_test(void);
+
 #ifdef __cplusplus
 }
 #endif

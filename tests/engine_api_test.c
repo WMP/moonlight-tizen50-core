@@ -37,6 +37,7 @@ void LiStopConnection(void) {}
 const char *LiGetStageName(int s) { (void)s; return "stage"; }
 bool LiGetEstimatedRttInfo(uint32_t *r, uint32_t *v) { *r = *v = 0; return false; }
 uint32_t LiGetHostFeatureFlags(void) { return 0; }
+bool LiGetHdrMetadata(PSS_HDR_METADATA m) { m->maxDisplayLuminance = 1000; return true; }
 
 #define KEY "00112233445566778899aabbccddeeff"
 static int start(const char *key, int w, int h) {

@@ -25,7 +25,7 @@ FLAGS="--sysroot=$DEPS/sysroot $ARCH $OPT -std=gnu11 -Wall -Wextra -fPIC"
 INC="-I$C/src -I$MLT/opus/include -I$OUT -I$HERE -I$MLT/libgamestream -I$BPD/ossl-inc -I$BPD/curl759/include"
 
 # engine objects (everything except the thin main.c)
-for src in cert_init engine_api engine_avoc engine_ui engine_pad video_esplus h264_sps audio_opus esplus_player gs_client input_evdev mldiag ctlcrypto; do
+for src in cert_init engine_api engine_avoc engine_ui engine_pad video_esplus h264_sps audio_opus esplus_hdr esplus_player gs_client input_evdev mldiag ctlcrypto; do
   "$GCC" $FLAGS $INC -c "$HERE/$src.c" -o "$OUT/$src.o"
 done
 
@@ -39,7 +39,7 @@ done
   -Wl,--hash-style=both -Wl,--wrap=PltEncryptMessage \
   -o "$OUT/libmlengine.so" \
   "$OUT"/cert_init.o "$OUT"/engine_api.o "$OUT"/engine_avoc.o "$OUT"/engine_ui.o "$OUT"/engine_pad.o "$OUT"/video_esplus.o "$OUT"/h264_sps.o "$OUT"/audio_opus.o \
-  "$OUT"/esplus_player.o "$OUT"/gs_client.o "$OUT"/input_evdev.o "$OUT"/mldiag.o "$OUT"/ctlcrypto.o \
+  "$OUT"/esplus_hdr.o "$OUT"/esplus_player.o "$OUT"/gs_client.o "$OUT"/input_evdev.o "$OUT"/mldiag.o "$OUT"/ctlcrypto.o \
   "$DEPSBUILD"/obj/*.o "$DEPSBUILD"/gs/*.o "$DEPSBUILD/libmbedcrypto_tv.a" "$DEPSBUILD/libopus_tv.a" -Wl,--exclude-libs,libopus_tv.a \
   -L"$TVL" -Wl,-rpath-link,"$TVL" -Wl,--allow-shlib-undefined -Wl,--unresolved-symbols=ignore-in-shared-libs \
   -l:libesplusplayer.so -l:libecore_wl2.so.1 -l:libecore.so.1 \
@@ -63,7 +63,8 @@ for s in ml_engine_start ml_engine_running ml_engine_wait ml_engine_stop \
          ml_engine_set_audio_cb ml_engine_set_audio_drops ml_engine_set_audio_host_stats \
          ml_engine_set_gamemode ml_engine_tv_game_mode ml_engine_get_audio_route ml_engine_get_audio_stats \
          ml_engine_set_stats_osd ml_engine_get_stats_osd \
-         ml_engine_set_target_depth_ms ml_engine_get_target_depth_ms; do
+         ml_engine_set_target_depth_ms ml_engine_get_target_depth_ms \
+         ml_engine_set_hdr_test ml_engine_get_hdr_test; do
   "$OBJD" -T "$OUT/libmlengine.so" | grep -q " $s\$" || miss="$miss $s"
 done
 [ -z "$miss" ] && echo "ABI exported: ml_engine_* OK" || { echo "MISSING ABI:$miss"; exit 1; }
