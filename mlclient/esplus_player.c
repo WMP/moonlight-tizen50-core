@@ -108,7 +108,7 @@ static void load_cfg(void) {
 static uint64_t s_last_video_pts_ms;   /* under s_lock */
 static uint64_t s_last_video_t;        /* esplus_mono_ms() of the last accepted video packet; 0 = none; under s_lock */
 static uint64_t s_fps_t0;     /* start of the current fps second; 0 = not started */
-static uint32_t s_fps_sub0;
+static uint32_t s_fps_sub0, s_fps_b0;
 
 /* set by recover(): the video sink returns DR_NEED_IDR for its next non-IDR frame, so
    moonlight-common-c drops the frames that reference the flushed ones and asks for an IDR */
@@ -369,10 +369,11 @@ void esplus_sample_tick(uint64_t now_ms) {
     if (esplusplayer_get_playing_time(s_pl, &play)) {
       esplus_stats.playing_ms = (uint32_t)play;
       esplus_stats.depth_ms = (int32_t)(s_last_video_pts_ms - play);
-      if (!s_fps_t0) { s_fps_t0 = now_ms; s_fps_sub0 = esplus_stats.submitted; }
+      if (!s_fps_t0) { s_fps_t0 = now_ms; s_fps_sub0 = esplus_stats.submitted; s_fps_b0 = esplus_stats.vbytes; }
       else if (now_ms - s_fps_t0 >= 1000) {
         esplus_stats.fps_submitted = esplus_stats.submitted - s_fps_sub0;
-        s_fps_t0 = now_ms; s_fps_sub0 = esplus_stats.submitted;
+        esplus_stats.kbps_submitted = (uint32_t)((uint64_t)(esplus_stats.vbytes - s_fps_b0) * 8 / (now_ms - s_fps_t0));   /* bits per ms = kbit/s */
+        s_fps_t0 = now_ms; s_fps_sub0 = esplus_stats.submitted; s_fps_b0 = esplus_stats.vbytes;
       }
       uint64_t age = s_last_video_t ? esplus_mono_ms() - s_last_video_t : UINT64_MAX;   /* real clock on both sides, not the tick's now_ms (the test passes a fake one) */
       int fresh = age <= NUDGE_FRESH_MS;                      /* a frame arrived lately: the lead is a real measurement */
@@ -394,7 +395,7 @@ void esplus_sample_tick(uint64_t now_ms) {
         }
       }
       s_tick_prev_ms = now_ms;
-      MLT("stats depth=%dms lead=%dms corr=%dms fps=%u submitted=%u", esplus_stats.depth_ms, lead, s_corr_ms, esplus_stats.fps_submitted, esplus_stats.submitted);
+      MLT("stats depth=%dms lead=%dms corr=%dms fps=%u kbps=%u submitted=%u", esplus_stats.depth_ms, lead, s_corr_ms, esplus_stats.fps_submitted, esplus_stats.kbps_submitted, esplus_stats.submitted);
       /* stall: playing time stopped while we keep submitting. Armed after the first non-zero time. */
       if (!s_stall_t || play != s_stall_play) {
         s_stall_play = play; s_stall_t = now_ms; s_stall_sub = esplus_stats.submitted; s_stall_vtries = s_vtries;
@@ -754,7 +755,7 @@ int esplus_submit_ep(const esplusplayer_es_packet *pkt, unsigned epoch) {
   if (r == ESPLUSPLAYER_SUBMIT_STATUS_SUCCESS) {
     uint64_t ms = pkt->pts / 1000000;
     if (pkt->type == ESPLUSPLAYER_STREAM_TYPE_VIDEO) {
-      s_last_video_pts_ms = ms; s_last_video_t = esplus_mono_ms(); __atomic_fetch_add(&esplus_stats.submitted, 1, __ATOMIC_RELAXED);
+      s_last_video_pts_ms = ms; s_last_video_t = esplus_mono_ms(); __atomic_fetch_add(&esplus_stats.submitted, 1, __ATOMIC_RELAXED); __atomic_fetch_add(&esplus_stats.vbytes, pkt->buffer_size, __ATOMIC_RELAXED);
     }
   }
   /* shortcut: sample per-frame trace (first 30, then every 300th, plus each change of the

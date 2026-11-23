@@ -27,6 +27,8 @@ typedef struct {
   volatile uint32_t aout_frames;    /* frames written to the ring */
   volatile uint32_t aout_underruns, aout_overruns, aout_drops;   /* native path counters */
   volatile int32_t  aout_buf_ms;    /* ring fill in ms (last report) */
+  volatile uint32_t vbytes;         /* bytes of the accepted video packets */
+  volatile uint32_t kbps_submitted; /* video bitrate of the last full second: a slide show at full fps with a low rate means the host repeats frames */
 } esplus_stats_t;
 
 enum { ESPLUS_LAT_OFF, ESPLUS_LAT_NUDGE, ESPLUS_LAT_ARRIVAL };

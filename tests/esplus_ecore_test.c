@@ -168,11 +168,12 @@ int main(int argc, char **argv) {
   setenv("MLENGINE_DEPTH_POLL_MS", "0", 1);
   begin();
   esplus_sample_tick(1000);                        /* first tick starts the fps second */
-  for (int i = 1; i <= 60; i++) vsub(i * 16);      /* 60 + the begin() packet = 61 */
+  for (int i = 1; i <= 60; i++) {                 /* 60 + the begin() packet = 61; 1000 bytes each */
+    esplusplayer_es_packet p = {ESPLUSPLAYER_STREAM_TYPE_VIDEO, NULL, 1000, i * 16 * 1000000ull, 0}; esplus_submit(&p); }
   play_ms = 500;
   esplus_sample_tick(2000);
   assert(esplus_stats.playing_ms == 500 && esplus_stats.depth_ms == 960 - 500 && esplus_stats.audio_depth_ms == 0);
-  assert(esplus_stats.fps_submitted == 60);
+  assert(esplus_stats.fps_submitted == 60 && esplus_stats.kbps_submitted == 480);   /* 60 x 1000 bytes in 1 s */
   play_ok = 0; play_ms = 9999; esplus_sample_tick(3000); assert(esplus_stats.playing_ms == 500);   /* failed read: unchanged */
   esplus_close();
   /* b: nudge. Correction grows by at most nudge_max*dt; inside the hysteresis it holds. */
