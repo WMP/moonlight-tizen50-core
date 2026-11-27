@@ -30,6 +30,9 @@ cp "$HERE/ui/icon.png" "$OUT/ui/icon.png" 2>/dev/null || true
 # Inject the message-port shim after messages.js (it replaces the WASM transport).
 sed -i 's#<script type="text/javascript" src="platform/messages.js"></script>#&\n  <script type="text/javascript" src="platform/mlaudio.js"></script>\n  <script type="text/javascript" src="platform/mlbridge.js"></script>#' "$OUT/ui/index.html"
 grep -q platform/mlaudio.js "$OUT/ui/index.html" || { echo "mlaudio.js not injected into index.html" >&2; exit 1; }
+# The TV encodes the negotiated six-channel Opus stream as Dolby Digital.
+sed -i '/data-value="51Surround"/a\                <li class="mdl-menu__item" data-value="51Ac3">5.1 Surround (Dolby Digital / AC-3)</li>' "$OUT/ui/index.html"
+grep -q 'data-value="51Ac3"' "$OUT/ui/index.html" || { echo "AC-3 audio menu not found" >&2; exit 1; }
 # Version + build id shown in Settings > About ("Moonlight v<ver> (<ML_BUILD>)").
 #   APP_VERSION   x.y.z for config.xml (CI: the release tag); unset keeps config.xml's
 #   BUILD_COMMIT  this repo's commit (CI passes it; git may refuse the mount in a container)

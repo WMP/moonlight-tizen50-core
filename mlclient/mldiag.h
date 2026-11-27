@@ -39,6 +39,7 @@ void mldiag_adec(int ok, int err);
    Native counters (path 3/4): written frames, underruns, overruns, dropped bytes (latency cap) and
    the ring-buffer fill in ms at read time. */
 void mldiag_aout(int has_cb);
+void mldiag_aout_ac3(void);
 void mldiag_aout_native(int active);   /* audio_opus.c: native output came up (1) or fell back (0) */
 void mldiag_aout_reason(const char *reason);   /* audio_opus.c: why native output is not used ("" = none yet) */
 void mldiag_anative(unsigned frames, unsigned underruns, unsigned overruns, unsigned drops, int buf_ms);

@@ -18,6 +18,10 @@
 
 #include "esplus_stats.h"
 #include "esplusplayer_tv50.h"
+#ifdef ML_ENABLE_AC3
+#include <dlfcn.h>
+#include "audio_ac3.h"
+#endif
 #include "mldiag.h"
 #include "mltrace.h"
 
@@ -208,6 +212,23 @@ static unsigned s_gen;
 static int s_rebuilds;
 static esplusplayer_video_stream_info s_vinfo;
 static int s_have_vinfo;
+#ifdef ML_ENABLE_AC3
+static const esplusplayer_audio_stream_info s_ac3_info = {
+  NULL, 0, ESPLUSPLAYER_AUDIO_MIME_TYPE_AC3, 448000, 6, 48000
+};
+static int (*s_add_audio)(esplusplayer_handle, const esplusplayer_audio_stream_info *);
+static int s_have_ac3;
+
+int esplus_enable_ac3(void) {
+  pthread_mutex_lock(&s_lock);
+  void *lib = dlopen("libesplusplayer.so", RTLD_LAZY);
+  s_add_audio = lib ? dlsym(lib, "esplusplayer_add_audio_stream_info") : NULL;
+  s_have_ac3 = s_pl && s_add_audio && s_add_audio(s_pl, &s_ac3_info);
+  if (lib) dlclose(lib);  /* the engine retains its link-time dependency */
+  pthread_mutex_unlock(&s_lock);
+  return s_have_ac3;
+}
+#endif
 static int s_scr_w = 1920, s_scr_h = 1080;   /* the screen size win_create_main used */
 static void set_callbacks(esplusplayer_handle h);
 
@@ -262,7 +283,11 @@ static int recover(const char *why, uint64_t now_ms) {
 /* a short get_playing_time failure on a healthy player must not rebuild it */
 #define REBUILD_NOTIME_MS 2000
 
-struct rb_job { esplusplayer_handle old; unsigned gen; esplusplayer_video_stream_info vinfo; };
+struct rb_job { esplusplayer_handle old; unsigned gen; esplusplayer_video_stream_info vinfo;
+#ifdef ML_ENABLE_AC3
+  int (*add_audio)(esplusplayer_handle, const esplusplayer_audio_stream_info *);
+#endif
+};
 
 static int rebuild_allowed(void) {
   return s_rebuilds < esplus_cfg.rebuild_max && s_win && s_pl && s_have_vinfo && !s_conflicted && !s_fatal_set;
@@ -280,6 +305,9 @@ static uint64_t rebuild_notime_ms(void) {
 
 /* under s_lock */
 static void rebuild_begin(struct rb_job *j, const char *why) {
+#ifdef ML_ENABLE_AC3
+  j->add_audio = s_have_ac3 ? s_add_audio : NULL;
+#endif
   s_rebuilds++; s_gen++;
   mldiag_rebuild();
   PLOG("player rebuild #%d (%s)\n", s_rebuilds, why); MLT("player rebuild #%d (%s)", s_rebuilds, why);
@@ -305,6 +333,12 @@ static void rebuild_slow(struct rb_job *j) {
     ok = esplusplayer_add_video_stream_info(np, &j->vinfo);
     MLT("rebuild: esplusplayer_add_video_stream_info -> %d", ok);
     mldiag_player("rb_addv", ok);
+#ifdef ML_ENABLE_AC3
+    if (j->add_audio && !j->add_audio(np, &s_ac3_info)) {
+      esplusplayer_close(np);
+      np = NULL;
+    }
+#endif
   }
   pthread_mutex_lock(&s_lock);
   if (j->gen != s_gen) {   /* closed meanwhile */
@@ -510,6 +544,9 @@ esplusplayer_handle esplus_create_open(void) {
     s_conflicted = 0; s_error_pending = 0; s_need_idr = 0; s_rebase = 0;
     s_stall_play = s_stall_t = s_last_recover_ms = 0; s_stall_sub = 0;
     s_stall_armed = s_recover_count = s_have_recover = s_off_logged = 0;
+#ifdef ML_ENABLE_AC3
+    s_have_ac3 = 0;
+#endif
     s_prepare_called = 0; s_start_tried = 0; s_rebuilds = 0; s_have_vinfo = 0; s_idr_t0 = s_idr_last = 0; s_idr_n = 0; s_vtries = s_stall_vtries = 0; s_start_t0 = 0; s_fatal_set = 0;
     s_catchup_done = s_catchup_hits = 0;
     s_pl = esplusplayer_create();

@@ -14,6 +14,9 @@
 #include <unistd.h>
 
 #include "Limelight.h"
+#ifdef ML_ENABLE_AC3
+#include "audio_ac3.h"
+#endif
 #include "esplus_stats.h"
 #include "esplusplayer_tv50.h"
 #include "h264_sps.h"
@@ -77,6 +80,9 @@ static int VidDecSetup_(int videoFormat, int width, int height, int redrawRate, 
 
 static void VidDecStart(void) { MLT("video start"); s_base_pts_ms = 0; s_have_base = 0;
   s_arrival_base_ms = 0; s_have_arrival = 0; s_prev_pts_ms = 0; s_have_prev = 0; s_skip_seq = esplus_sample_seq() - 1;
+#ifdef ML_ENABLE_AC3
+  if (ml_ac3_waiting()) return;
+#endif
   esplus_prepare(); }
 static void VidDecStop(void) {}
 static void VidDecCleanup(void) { MLT("video cleanup"); esplus_close(); free(s_scratch); s_scratch = NULL; s_scratch_cap = 0; }
@@ -89,6 +95,9 @@ static int VidDecSetup(int videoFormat, int width, int height, int redrawRate, v
 }
 
 static int VidDecSubmit(PDECODE_UNIT du) {
+#ifdef ML_ENABLE_AC3
+  if (ml_ac3_waiting()) return DR_NEED_IDR;
+#endif
   mldiag_video_du(du->frameType == FRAME_TYPE_IDR);
   unsigned epoch = esplus_epoch();   /* BEFORE the flags: a rebuild that arms the new player after this makes the submit stale */
   if (esplus_take_rebase()) {   /* fresh player after a rebuild: its timeline starts at 0 again, like the first start */
@@ -147,8 +156,12 @@ static int VidDecSubmit(PDECODE_UNIT du) {
     __atomic_fetch_add(&esplus_stats.dropped_full, 1, __ATOMIC_RELAXED);
     return DR_NEED_IDR;
   }
-  if (r == ESPLUSPLAYER_SUBMIT_STATUS_SUCCESS || r == ESPLUSPLAYER_SUBMIT_STATUS_NOT_PREPARED)
+  if (r == ESPLUSPLAYER_SUBMIT_STATUS_SUCCESS || r == ESPLUSPLAYER_SUBMIT_STATUS_NOT_PREPARED) {
+#ifdef ML_ENABLE_AC3
+    ml_ac3_submit((uint64_t)pts_ms, epoch);
+#endif
     return DR_OK;
+  }
   VLOG("submit_packet failed %d\n", r);
   return DR_NEED_IDR;
 }

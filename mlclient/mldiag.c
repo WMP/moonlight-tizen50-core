@@ -42,7 +42,7 @@ static unsigned long long s_abytes;       /* PCM bytes handed to the audio callb
 static int s_adrops, s_asent, s_asendfail;   /* the host's audio counters (last report): dropped, sent to the UI, failed sends */
 static int s_aout_off = -1, s_aout_end;   /* where the aout section sits in s_out (-1 = none); mldiag_last re-renders it */
 static int s_adec_err;                    /* last libopus error */
-static int s_aout;                        /* audio output: 0 not reached, 1 callback present, 2 none (no callback), 3 native, 4 native -> callback fallback */
+static int s_aout;                        /* audio output: 0 not reached, 1 callback present, 2 none (no callback), 3 native, 4 native -> callback fallback, 5 AC-3 */
 static char s_aio_reason[48] = "-";       /* why the native output is not used (audio_opus.c token) */
 static unsigned s_an_frames, s_an_under, s_an_over, s_an_drops;   /* native audio-io counters (last report kept) */
 static int s_an_bufms;                    /* ring-buffer fill in ms at the last report */
@@ -96,6 +96,7 @@ void mldiag_pad(int arrival, int rc) {
   if (rc != 0) { INC(C_PADFAIL); __atomic_store_n(&s_pad_rc, rc, __ATOMIC_RELAXED); }
 }
 
+void mldiag_aout_ac3(void) { __atomic_store_n(&s_aout, 5, __ATOMIC_RELAXED); }
 void mldiag_aout(int has_cb) { __atomic_store_n(&s_aout, has_cb ? 1 : 2, __ATOMIC_RELAXED); }
 void mldiag_aout_native(int active) { __atomic_store_n(&s_aout, active ? 3 : 4, __ATOMIC_RELAXED); }
 /* Why the native output is not used; shown in the "aout webaudio fallback=native" variant.
@@ -259,7 +260,10 @@ void mldiag_player(const char *what, int rc) {
    mldiag_last renders this section again. */
 static void aout_text(char *d, size_t n) {
   int a = GET_A(s_aout);
-  if (a == 3)
+  if (a == 5)
+    snprintf(d, n, " | aout ac3 frames=%u underruns=%u drops=%u buf_ms=%d",
+             GET_A(s_an_frames), GET_A(s_an_under), GET_A(s_an_drops), GET_A(s_an_bufms));
+  else if (a == 3)
     snprintf(d, n, " | aout native frames=%u underruns=%u overruns=%u drops=%u buf_ms=%d",
              GET_A(s_an_frames), GET_A(s_an_under), GET_A(s_an_over), GET_A(s_an_drops), GET_A(s_an_bufms));
   else if (a == 4)   /* native output failed: this session fell back to the callback path */
