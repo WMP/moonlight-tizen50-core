@@ -12,6 +12,9 @@
 #include <time.h>
 
 #include "Limelight.h"
+#ifdef ML_ENABLE_AC3
+#include "audio_ac3.h"
+#endif
 #include "errors.h"
 #include "esplus_stats.h"
 #include "mlengine.h"
@@ -295,8 +298,12 @@ static int start_session_impl(const char *host, int width, int height, int fps, 
   g_sc.colorSpace = (hdr && hevc) ? COLORSPACE_REC_2020 : COLORSPACE_REC_709;
   g_sc.colorRange = full_range ? COLOR_RANGE_FULL : COLOR_RANGE_LIMITED;
   MLT("start_session: colorSpace=%d colorRange=%d", g_sc.colorSpace, g_sc.colorRange);
+  const int ac3 = audio_config && !strcmp(audio_config, "51Ac3");
+#ifdef ML_ENABLE_AC3
+  ml_ac3_select(ac3);
+#endif
   g_sc.audioConfiguration = !audio_config ? AUDIO_CONFIGURATION_STEREO
-    : !strcmp(audio_config, "51Surround") ? AUDIO_CONFIGURATION_51_SURROUND
+    : (ac3 || !strcmp(audio_config, "51Surround")) ? AUDIO_CONFIGURATION_51_SURROUND
     : !strcmp(audio_config, "71Surround") ? AUDIO_CONFIGURATION_71_SURROUND
     : AUDIO_CONFIGURATION_STEREO;
   memcpy(g_sc.remoteInputAesKey, key, 16);

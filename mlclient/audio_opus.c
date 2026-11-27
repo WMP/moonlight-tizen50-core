@@ -31,6 +31,10 @@
 #include <opus_multistream.h>
 
 #include "Limelight.h"
+#ifdef ML_ENABLE_AC3
+#include "audio_ac3.h"
+extern void esplus_prepare(void);
+#endif
 #include "errors.h"
 #include "esplus_stats.h"
 #include "mldiag.h"
@@ -44,6 +48,9 @@ void ml_engine_set_audio_cb(ml_engine_audio_cb cb) { __atomic_store_n(&s_cb_set,
 void ml_engine_set_audio_drops(int dropped) { mldiag_adrops(dropped); }
 void ml_engine_set_audio_host_stats(int sent, int dropped, int send_failures) { mldiag_ahost(sent, dropped, send_failures); }
 
+#ifdef ML_ENABLE_AC3
+static int s_ac3;
+#endif
 static int s_samples_per_frame = 240, s_channels = 2, s_rate = 48000;
 static OpusMSDecoder *s_dec;
 static opus_int16 *s_pcm;   /* one frame, reused: the callback copies it */
@@ -353,6 +360,10 @@ int ml_engine_get_audio_stats(ml_engine_audio_stats *out) {
 }
 
 static void ar_cleanup(void) {
+#ifdef ML_ENABLE_AC3
+  if (s_ac3) { ml_ac3_ready(0); ml_ac3_close(); }
+  s_ac3 = 0;
+#endif
   native_stop();
   if (s_dec) opus_multistream_decoder_destroy(s_dec);
   free(s_pcm);
@@ -365,6 +376,9 @@ static int ar_init(int audioConfig, const POPUS_MULTISTREAM_CONFIGURATION cfg, v
   MLT("audio init cfg=0x%x %d Hz %d ch streams=%d", audioConfig, cfg ? cfg->sampleRate : 0,
       cfg ? cfg->channelCount : 0, cfg ? cfg->streams : 0);
   if (!cfg || cfg->channelCount <= 0 || cfg->channelCount > 8 || cfg->sampleRate <= 0 || cfg->samplesPerFrame <= 0) { MLT("audio init -> -1 (config)"); return -1; }
+#ifdef ML_ENABLE_AC3
+  const int want_ac3 = ml_ac3_waiting();
+#endif
   ar_cleanup();   /* a decoder (and native output) left over from a previous session */
   s_samples_per_frame = cfg->samplesPerFrame;
   s_channels = cfg->channelCount;
@@ -381,6 +395,19 @@ static int ar_init(int audioConfig, const POPUS_MULTISTREAM_CONFIGURATION cfg, v
   s_pcm = malloc((size_t)s_samples_per_frame * (size_t)s_channels * sizeof *s_pcm);
   if (!s_pcm) { ar_cleanup(); ALOG("out of memory\n"); mldiag_adec(0, OPUS_ALLOC_FAIL); return -1; }
 
+#ifdef ML_ENABLE_AC3
+  if (want_ac3) {
+    s_ac3 = ml_ac3_open(s_rate, s_channels) && esplus_enable_ac3();
+    if (!s_ac3) { ALOG("AC-3 unavailable, falling back to the PCM callback\n"); ml_ac3_close(); }
+    esplus_prepare();
+    ml_ac3_ready(s_ac3);
+    if (s_ac3) {
+      mldiag_aout_ac3();
+      esplus_stats.aout_route = 2;  /* native playback, no host/UI PCM bridge */
+      return 0;
+    }
+  }
+#endif
   s_cb = __atomic_load_n(&s_cb_set, __ATOMIC_ACQUIRE);
   int native = native_start(cfg->sampleRate, cfg->channelCount);
   if (native) {
@@ -392,7 +419,11 @@ static int ar_init(int audioConfig, const POPUS_MULTISTREAM_CONFIGURATION cfg, v
     esplus_stats.aout_route = s_cb ? 1 : 0;
     mldiag_aout(s_cb != NULL);              /* which output this session uses (may be none) */
     if (s_cb) mldiag_aout_native(0);        /* ...after a failed native attempt: the fallback variant of the section */
+#ifdef ML_ENABLE_AC3
+    mldiag_aout_reason(want_ac3 ? "ac3-unavailable" : s_aio_reason);
+#else
     mldiag_aout_reason(s_aio_reason);
+#endif
     ALOG("audio output: callback path (%s; native reason: %s)\n", s_cb ? "set" : "missing", s_aio_reason);
     if (!s_cb) { ALOG("audio output unavailable (no callback)\n"); MLT("audio output unavailable (no callback)"); }
     else { ALOG("init %d Hz, %d ch, %d samples/frame, PCM S16LE -> callback path\n", cfg->sampleRate, cfg->channelCount, cfg->samplesPerFrame); }
@@ -410,7 +441,11 @@ static void ar_stop(void) {}
 static void ar_decodePlay(char *data, int len) {
   if (!s_dec || !s_pcm) return;
   int native = __atomic_load_n(&s_native_on, __ATOMIC_RELAXED);
+#ifdef ML_ENABLE_AC3
+  if (!native && !s_cb && !s_ac3) return;
+#else
   if (!native && !s_cb) return;   /* nothing to feed: skip the decode */
+#endif
   /* no data = a lost packet: libopus conceals it */
   int n = (data == NULL || len <= 0)
       ? opus_multistream_decode(s_dec, NULL, 0, s_pcm, s_samples_per_frame, 0)
@@ -421,6 +456,9 @@ static void ar_decodePlay(char *data, int len) {
     return;   /* nothing is handed over: the output fills the gap */
   }
   mldiag_adec(1, 0);
+#ifdef ML_ENABLE_AC3
+  if (s_ac3) { ml_ac3_feed(s_pcm, n); return; }
+#endif
   if (native) {
     native_feed(s_pcm, n);
     return;

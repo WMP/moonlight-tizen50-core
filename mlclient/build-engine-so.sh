@@ -10,6 +10,8 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 GCC=$DEPS/toolchain/data/tools/arm-linux-gnueabi-gcc-6.2/bin/arm-linux-gnueabi-gcc
 OBJD=$DEPS/toolchain/data/tools/arm-linux-gnueabi-gcc-6.2/bin/arm-linux-gnueabi-objdump
 C=$MLT/moonlight-common-c; TVL=$DEPS/tv-libs/usr/lib
+FFMPEG=$BPD/ffmpeg-arm
+test -f "$FFMPEG/lib/libavcodec.a" || { echo "Missing the AC-3 encoder. Run fetch-backport-deps.sh." >&2; exit 1; }
 # BUILD_VARIANT: release (default, -O2) or debug (-O0 -g, MLT_TRACE trace on).
 BUILD_VARIANT=${BUILD_VARIANT:-release}
 case "$BUILD_VARIANT" in
@@ -21,11 +23,11 @@ echo "engine variant: $BUILD_VARIANT"
 OUT=${OUT:-./engine-build}; mkdir -p "$OUT"
 cp "$HERE/../esplusplayer_tv50.h" "$OUT/"
 ARCH="-mcpu=cortex-a53 -mfpu=neon-vfpv4 -mfloat-abi=softfp"
-FLAGS="--sysroot=$DEPS/sysroot $ARCH $OPT -std=gnu11 -Wall -Wextra -fPIC"
-INC="-I$C/src -I$MLT/opus/include -I$OUT -I$HERE -I$MLT/libgamestream -I$BPD/ossl-inc -I$BPD/curl759/include"
+FLAGS="--sysroot=$DEPS/sysroot $ARCH $OPT -std=gnu11 -Wall -Wextra -fPIC -DML_ENABLE_AC3"
+INC="-I$C/src -I$MLT/opus/include -I$OUT -I$HERE -I$MLT/libgamestream -I$BPD/ossl-inc -I$BPD/curl759/include -I$FFMPEG/include"
 
 # engine objects (everything except the thin main.c)
-for src in cert_init engine_api engine_avoc engine_ui engine_pad video_esplus h264_sps audio_opus esplus_player gs_client input_evdev mldiag ctlcrypto; do
+for src in cert_init engine_api engine_avoc engine_ui engine_pad video_esplus h264_sps audio_opus audio_ac3 esplus_player gs_client input_evdev mldiag ctlcrypto; do
   "$GCC" $FLAGS $INC -c "$HERE/$src.c" -o "$OUT/$src.o"
 done
 
@@ -38,9 +40,10 @@ done
 "$GCC" --sysroot=$DEPS/sysroot $ARCH $LOPT -shared -Wl,-soname,libmlengine.so \
   -Wl,--hash-style=both -Wl,--wrap=PltEncryptMessage \
   -o "$OUT/libmlengine.so" \
-  "$OUT"/cert_init.o "$OUT"/engine_api.o "$OUT"/engine_avoc.o "$OUT"/engine_ui.o "$OUT"/engine_pad.o "$OUT"/video_esplus.o "$OUT"/h264_sps.o "$OUT"/audio_opus.o \
+  "$OUT"/cert_init.o "$OUT"/engine_api.o "$OUT"/engine_avoc.o "$OUT"/engine_ui.o "$OUT"/engine_pad.o "$OUT"/video_esplus.o "$OUT"/h264_sps.o "$OUT"/audio_opus.o "$OUT"/audio_ac3.o \
   "$OUT"/esplus_player.o "$OUT"/gs_client.o "$OUT"/input_evdev.o "$OUT"/mldiag.o "$OUT"/ctlcrypto.o \
   "$DEPSBUILD"/obj/*.o "$DEPSBUILD"/gs/*.o "$DEPSBUILD/libmbedcrypto_tv.a" "$DEPSBUILD/libopus_tv.a" -Wl,--exclude-libs,libopus_tv.a \
+  "$FFMPEG/lib/libavcodec.a" "$FFMPEG/lib/libavutil.a" -Wl,--exclude-libs,libavcodec.a:libavutil.a -lm \
   -L"$TVL" -Wl,-rpath-link,"$TVL" -Wl,--allow-shlib-undefined -Wl,--unresolved-symbols=ignore-in-shared-libs \
   -l:libesplusplayer.so -l:libecore_wl2.so.1 -l:libecore.so.1 \
   -l:libssl.so.1.0.0 -l:libcrypto.so.1.0.0 -l:libcurl.so.4 -lpthread -ldl

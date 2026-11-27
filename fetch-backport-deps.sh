@@ -46,3 +46,24 @@ cat > ossl-inc/openssl/opensslconf.h <<'EOF'
 #endif
 EOF
 echo "backport deps ready in $OUT"
+
+# Build only the AC-3 encoder and its utility library for the TV target.
+if [ ! -f ffmpeg-arm/lib/libavcodec.a ]; then
+  tizen_deps=$(realpath "${DEPS:-/opt/tizen-deps}")
+  out=$(pwd)
+  cross="$tizen_deps/toolchain/data/tools/arm-linux-gnueabi-gcc-6.2/bin/arm-linux-gnueabi-"
+  curl -fsSL --retry 3 https://ffmpeg.org/releases/ffmpeg-6.1.3.tar.xz -o ffmpeg-6.1.3.tar.xz
+  printf '%s  %s\n' bc5f1e4a4d283a6492354684ee1124129c52293bcfc6a9169193539fbece3487 ffmpeg-6.1.3.tar.xz | sha256sum -c -
+  tar -xf ffmpeg-6.1.3.tar.xz
+  (
+    cd ffmpeg-6.1.3
+    ./configure --prefix="$out/ffmpeg-arm" --enable-cross-compile --cross-prefix="$cross" \
+      --arch=arm --target-os=linux --sysroot="$tizen_deps/sysroot" \
+      --extra-cflags="-mcpu=cortex-a53 -mfpu=neon-vfpv4 -mfloat-abi=softfp" \
+      --disable-autodetect --disable-everything --disable-programs --disable-doc --disable-asm \
+      --disable-avdevice --disable-avfilter --disable-avformat --disable-swscale --disable-swresample \
+      --enable-encoder=ac3_fixed --enable-pic
+    make -j"$(getconf _NPROCESSORS_ONLN)"
+    make install
+  )
+fi
